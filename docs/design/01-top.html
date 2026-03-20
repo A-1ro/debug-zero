@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEBUG ZERO — Top</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #060b14;
+    --bg-panel:   #0c1521;
+    --bg-card:    #0f1e30;
+    --border:     #0d3a5e;
+    --border-glow:#1a5fa0;
+    --cyan:       #00e5ff;
+    --cyan-dim:   #007a99;
+    --purple:     #8b5cf6;
+    --green:      #00ff8c;
+    --red:        #ff1a4b;
+    --amber:      #ffaa00;
+    --text:       #c8d8e8;
+    --text-dim:   #4a6080;
+    --text-muted: #2a3a50;
+    --font-mono:  'Share Tech Mono', 'Courier New', monospace;
+    --font-title: 'Orbitron', 'Share Tech Mono', monospace;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .page {
+    position: relative;
+    z-index: 2;
+    width: 1440px;
+    min-height: 900px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 40px;
+  }
+
+  /* Header bar */
+  .site-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    padding: 0 40px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(6,11,20,0.9);
+  }
+
+  .site-header .logo {
+    font-family: var(--font-title);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    color: var(--cyan);
+    text-shadow: 0 0 12px rgba(0,229,255,0.6);
+  }
+
+  .site-header .version {
+    margin-left: 16px;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+  }
+
+  .site-header .status-bar {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Hero */
+  .hero {
+    text-align: center;
+    margin-bottom: 64px;
+  }
+
+  .hero-title {
+    font-family: var(--font-title);
+    font-size: 72px;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    color: var(--cyan);
+    text-shadow:
+      0 0 20px rgba(0,229,255,0.8),
+      0 0 60px rgba(0,229,255,0.4),
+      0 0 120px rgba(0,229,255,0.2);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+
+  .hero-subtitle {
+    font-size: 13px;
+    letter-spacing: 0.5em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .hero-desc {
+    margin-top: 24px;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    line-height: 1.8;
+  }
+
+  .hero-rule {
+    display: inline-block;
+    background: rgba(0,229,255,0.08);
+    border: 1px solid rgba(0,229,255,0.2);
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--cyan);
+    letter-spacing: 0.2em;
+    margin-top: 12px;
+  }
+
+  /* Main card area */
+  .card-area {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    width: 100%;
+    max-width: 720px;
+  }
+
+  /* Panel */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    opacity: 0.5;
+  }
+
+  .panel-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .panel-header .icon {
+    font-size: 14px;
+    color: var(--cyan);
+  }
+
+  .panel-header .title {
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .panel-body {
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Form elements */
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .field-label {
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .field-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    padding: 12px 16px;
+    outline: none;
+    width: 100%;
+    letter-spacing: 0.05em;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .field-input:focus {
+    border-color: var(--cyan-dim);
+    box-shadow: 0 0 0 1px var(--cyan-dim), inset 0 0 8px rgba(0,229,255,0.05);
+  }
+
+  .field-input::placeholder {
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+  }
+
+  /* Buttons */
+  .btn {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    padding: 14px 24px;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: transparent;
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+    box-shadow: inset 0 0 20px rgba(0,229,255,0.05);
+  }
+
+  .btn-primary::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(0,229,255,0.12), transparent);
+    transform: translateX(-100%);
+    transition: transform 0.5s;
+  }
+
+  .btn-primary:hover::before {
+    transform: translateX(100%);
+  }
+
+  .btn-primary:hover {
+    background: rgba(0,229,255,0.08);
+    box-shadow: 0 0 20px rgba(0,229,255,0.3), inset 0 0 20px rgba(0,229,255,0.05);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--purple);
+    border: 1px solid var(--purple);
+    box-shadow: inset 0 0 20px rgba(139,92,246,0.05);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(139,92,246,0.08);
+    box-shadow: 0 0 20px rgba(139,92,246,0.3), inset 0 0 20px rgba(139,92,246,0.05);
+  }
+
+  /* Divider */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  /* Info section */
+  .info-panel {
+    margin-top: 48px;
+    max-width: 720px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  .info-item {
+    background: var(--bg-panel);
+    padding: 20px 24px;
+    text-align: center;
+  }
+
+  .info-item .label {
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .info-item .value {
+    font-family: var(--font-title);
+    font-size: 24px;
+    color: var(--cyan);
+  }
+
+  .info-item .desc {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* Corner decorations */
+  .corner-tl, .corner-br {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    pointer-events: none;
+  }
+
+  .corner-tl {
+    top: 8px; left: 8px;
+    border-top: 1px solid var(--cyan);
+    border-left: 1px solid var(--cyan);
+    opacity: 0.4;
+  }
+
+  .corner-br {
+    bottom: 8px; right: 8px;
+    border-bottom: 1px solid var(--cyan);
+    border-right: 1px solid var(--cyan);
+    opacity: 0.4;
+  }
+
+  /* Decoration numbers */
+  .deco-numbers {
+    position: absolute;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    user-select: none;
+    pointer-events: none;
+  }
+
+  .deco-left {
+    left: 40px;
+    top: 50%;
+    transform: translateY(-50%) rotate(-90deg);
+    transform-origin: center;
+  }
+
+  .deco-right {
+    right: 40px;
+    top: 50%;
+    transform: translateY(-50%) rotate(90deg);
+    transform-origin: center;
+  }
+
+  /* Card preview */
+  .card-preview {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin: 8px 0;
+  }
+
+  .num-card {
+    width: 36px;
+    height: 50px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-glow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-title);
+    font-size: 18px;
+    color: var(--text);
+    position: relative;
+  }
+
+  .num-card.zero {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    box-shadow: 0 0 12px rgba(0,229,255,0.3);
+  }
+
+  .hint-text {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: center;
+    letter-spacing: 0.1em;
+    line-height: 1.6;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    border: 1px solid;
+    margin-right: 4px;
+  }
+
+  .tag-cyan { color: var(--cyan); border-color: rgba(0,229,255,0.4); }
+  .tag-purple { color: var(--purple); border-color: rgba(139,92,246,0.4); }
+  .tag-green { color: var(--green); border-color: rgba(0,255,140,0.4); }
+
+  /* Footer */
+  .site-footer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 40px;
+    border-top: 1px solid var(--border);
+    background: rgba(6,11,20,0.9);
+  }
+
+  .site-footer .footer-left {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.2em;
+  }
+
+  .site-footer .footer-right {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <!-- Site Header -->
+  <header class="site-header">
+    <span class="logo">DEBUG ZERO</span>
+    <span class="version">v1.0.0-basic</span>
+    <div class="status-bar">
+      <div class="dot"></div>
+      <span>SERVER ONLINE</span>
+      <span>|</span>
+      <span>RULESET: BASIC</span>
+    </div>
+  </header>
+
+  <!-- Decoration -->
+  <span class="deco-numbers deco-left">0 · 1 · 2 · 3 · 4 · 5 · 6 · 7 · 8 · 9</span>
+  <span class="deco-numbers deco-right">+ · - · × · ÷ · = · 0</span>
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1 class="hero-title">DEBUG ZERO</h1>
+    <p class="hero-subtitle">Number Card Battle System</p>
+    <p class="hero-desc">
+      数字カード 0〜9 と四則演算で目標値を <strong style="color:var(--cyan)">0</strong> にせよ<br>
+      戦略・バグ・交渉が絡み合う非対称ボードゲーム
+    </p>
+    <div style="margin-top: 16px;">
+      <span class="tag tag-cyan">REALTIME</span>
+      <span class="tag tag-purple">STRATEGY</span>
+      <span class="tag tag-green">WEBSOCKET</span>
+    </div>
+
+    <!-- Card Preview -->
+    <div class="card-preview" style="margin-top: 24px;">
+      <div class="num-card">3</div>
+      <div class="num-card">+</div>
+      <div class="num-card">7</div>
+      <div class="num-card">=</div>
+      <div class="num-card zero">0</div>
+    </div>
+  </div>
+
+  <!-- Main Action Area -->
+  <div class="card-area">
+
+    <!-- Create Room -->
+    <div class="panel" style="position:relative;">
+      <div class="corner-tl"></div>
+      <div class="corner-br"></div>
+      <div class="panel-header">
+        <span class="icon">▶</span>
+        <span class="title">Create Room</span>
+      </div>
+      <div class="panel-body">
+        <div class="field-group">
+          <label class="field-label">Player Name</label>
+          <input class="field-input" type="text" placeholder="ENTER YOUR NAME" value="Player_01">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Max Players</label>
+          <input class="field-input" type="number" placeholder="4" value="4">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Rule Set</label>
+          <input class="field-input" type="text" placeholder="BASIC" value="BASIC" readonly
+            style="color:var(--cyan);cursor:not-allowed;">
+        </div>
+        <div class="divider"></div>
+        <button class="btn btn-primary">
+          ▶ CREATE ROOM
+        </button>
+      </div>
+    </div>
+
+    <!-- Join Room -->
+    <div class="panel" style="position:relative;">
+      <div class="corner-tl"></div>
+      <div class="corner-br"></div>
+      <div class="panel-header">
+        <span class="icon">◈</span>
+        <span class="title">Join Room</span>
+      </div>
+      <div class="panel-body">
+        <div class="field-group">
+          <label class="field-label">Player Name</label>
+          <input class="field-input" type="text" placeholder="ENTER YOUR NAME">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Room ID</label>
+          <input class="field-input" type="text" placeholder="e.g. ABC123"
+            style="letter-spacing:0.3em; text-transform:uppercase;">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Join as</label>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <div style="
+              background: rgba(0,229,255,0.08);
+              border: 1px solid var(--cyan);
+              padding: 10px;
+              text-align:center;
+              font-size:11px;
+              letter-spacing:0.2em;
+              color:var(--cyan);
+              cursor:pointer;
+            ">● PLAYER</div>
+            <div style="
+              background: var(--bg);
+              border: 1px solid var(--border);
+              padding: 10px;
+              text-align:center;
+              font-size:11px;
+              letter-spacing:0.2em;
+              color:var(--text-dim);
+              cursor:pointer;
+            ">○ SPECTATOR</div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <button class="btn btn-secondary">
+          ◈ JOIN ROOM
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Info strip -->
+  <div class="info-panel">
+    <div class="info-item">
+      <div class="label">Players</div>
+      <div class="value">2–4</div>
+      <div class="desc">recommended 4</div>
+    </div>
+    <div class="info-item">
+      <div class="label">Win Condition</div>
+      <div class="value">3</div>
+      <div class="desc">wins required</div>
+    </div>
+    <div class="info-item">
+      <div class="label">Cards</div>
+      <div class="value">0–9</div>
+      <div class="desc">arithmetic battle</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <span class="footer-left">DEBUG ZERO / RULE: BASIC / © 2025</span>
+    <span class="footer-right">Cloudflare Workers + Hono + React / WebSocket</span>
+  </footer>
+</div>
+</body>
+</html>

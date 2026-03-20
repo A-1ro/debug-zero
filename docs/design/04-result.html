@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEBUG ZERO — Session Result</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #060b14;
+    --bg-panel:   #0c1521;
+    --bg-card:    #0f1e30;
+    --border:     #0d3a5e;
+    --border-glow:#1a5fa0;
+    --cyan:       #00e5ff;
+    --cyan-dim:   #007a99;
+    --purple:     #8b5cf6;
+    --green:      #00ff8c;
+    --red:        #ff1a4b;
+    --amber:      #ffaa00;
+    --text:       #c8d8e8;
+    --text-dim:   #4a6080;
+    --text-muted: #2a3a50;
+    --font-mono:  'Share Tech Mono', 'Courier New', monospace;
+    --font-title: 'Orbitron', 'Share Tech Mono', monospace;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Grid bg */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none; z-index: 0;
+  }
+
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.12) 2px, rgba(0,0,0,0.12) 4px
+    );
+    pointer-events: none; z-index: 1;
+  }
+
+  /* Winner glow */
+  .winner-glow {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px; height: 600px;
+    background: radial-gradient(ellipse, rgba(0,229,255,0.06) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+    animation: winnerPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes winnerPulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    50% { transform: translate(-50%, -50%) scale(1.1); opacity: 0.7; }
+  }
+
+  .page {
+    position: relative; z-index: 2;
+    width: 1440px; min-height: 900px;
+    display: flex; flex-direction: column;
+  }
+
+  /* ─── Header ─── */
+  .site-header {
+    height: 48px;
+    display: flex; align-items: center;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(6,11,20,0.98);
+    flex-shrink: 0;
+  }
+
+  .breadcrumb {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+  }
+
+  .logo { font-family: var(--font-title); font-size: 12px; color: var(--cyan); letter-spacing: 0.2em; }
+  .sep { color: var(--text-muted); }
+  .crumb { color: var(--text-dim); letter-spacing: 0.1em; }
+
+  .header-right {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 16px;
+    font-size: 11px; color: var(--text-dim);
+  }
+
+  /* ─── Main Content ─── */
+  .main {
+    flex: 1;
+    display: flex; flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 40px;
+    gap: 40px;
+  }
+
+  /* Session ended label */
+  .session-ended-label {
+    font-size: 10px; letter-spacing: 0.6em;
+    color: var(--text-dim); text-transform: uppercase;
+    text-align: center;
+  }
+
+  /* Winner block */
+  .winner-block {
+    text-align: center;
+    position: relative;
+  }
+
+  .winner-tag {
+    display: inline-block;
+    font-size: 10px; letter-spacing: 0.5em;
+    color: var(--amber); text-transform: uppercase;
+    border: 1px solid rgba(255,170,0,0.3);
+    padding: 5px 20px;
+    margin-bottom: 16px;
+    background: rgba(255,170,0,0.05);
+  }
+
+  .winner-name {
+    font-family: var(--font-title);
+    font-size: 64px; font-weight: 900;
+    color: var(--cyan);
+    text-shadow:
+      0 0 20px rgba(0,229,255,0.8),
+      0 0 60px rgba(0,229,255,0.4),
+      0 0 120px rgba(0,229,255,0.15);
+    letter-spacing: 0.1em;
+    line-height: 1;
+    animation: nameGlow 2s ease-in-out infinite;
+  }
+
+  @keyframes nameGlow {
+    0%, 100% { text-shadow: 0 0 20px rgba(0,229,255,0.8), 0 0 60px rgba(0,229,255,0.4), 0 0 120px rgba(0,229,255,0.15); }
+    50% { text-shadow: 0 0 30px rgba(0,229,255,1), 0 0 80px rgba(0,229,255,0.6), 0 0 160px rgba(0,229,255,0.25); }
+  }
+
+  .winner-subtitle {
+    font-size: 12px; letter-spacing: 0.3em;
+    color: var(--text-dim); margin-top: 12px;
+  }
+
+  .winner-strategy {
+    font-size: 11px; letter-spacing: 0.2em;
+    color: var(--amber); margin-top: 4px;
+  }
+
+  /* Corner decoration for winner block */
+  .winner-corner {
+    position: absolute;
+    width: 32px; height: 32px;
+    border-color: var(--cyan);
+    border-style: solid;
+    opacity: 0.5;
+  }
+
+  .wc-tl { top: -20px; left: -20px; border-width: 2px 0 0 2px; }
+  .wc-tr { top: -20px; right: -20px; border-width: 2px 2px 0 0; }
+  .wc-bl { bottom: -20px; left: -20px; border-width: 0 0 2px 2px; }
+  .wc-br { bottom: -20px; right: -20px; border-width: 0 2px 2px 0; }
+
+  /* ─── Scoreboard ─── */
+  .scoreboard {
+    width: 100%;
+    max-width: 800px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .scoreboard::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    opacity: 0.5;
+  }
+
+  .scoreboard-header {
+    display: grid;
+    grid-template-columns: 40px 1fr 80px 80px 80px 80px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px; letter-spacing: 0.3em;
+    color: var(--text-muted); text-transform: uppercase;
+    background: rgba(6,11,20,0.6);
+  }
+
+  .scoreboard-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 80px 80px 80px 80px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    transition: background 0.15s;
+  }
+
+  .scoreboard-row:last-child { border-bottom: none; }
+  .scoreboard-row:hover { background: rgba(0,229,255,0.03); }
+
+  .scoreboard-row.winner-row {
+    background: rgba(0,229,255,0.05);
+  }
+
+  .rank-num {
+    font-family: var(--font-title);
+    font-size: 16px; color: var(--text-muted);
+  }
+
+  .rank-num.first { color: var(--cyan); }
+  .rank-num.second { color: var(--text); }
+  .rank-num.third { color: var(--text-dim); }
+
+  .player-info { display: flex; flex-direction: column; gap: 2px; }
+
+  .player-info-name {
+    font-size: 14px; letter-spacing: 0.05em;
+  }
+
+  .player-info-name.winner { color: var(--cyan); }
+
+  .player-info-strategy {
+    font-size: 10px; color: var(--text-muted);
+    letter-spacing: 0.1em;
+  }
+
+  .player-info-strategy .strat-revealed { color: var(--amber); }
+
+  .wins-display {
+    display: flex; align-items: center; gap: 4px;
+  }
+
+  .win-count {
+    font-family: var(--font-title);
+    font-size: 18px;
+  }
+
+  .win-count.high { color: var(--cyan); text-shadow: 0 0 10px rgba(0,229,255,0.4); }
+  .win-count.mid { color: var(--text); }
+  .win-count.low { color: var(--text-dim); }
+
+  .win-pips {
+    display: flex; gap: 3px;
+  }
+
+  .pip {
+    width: 8px; height: 8px;
+    border: 1px solid var(--text-muted);
+  }
+
+  .pip.filled { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 4px rgba(255,170,0,0.4); }
+  .pip.filled-cyan { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 4px rgba(0,229,255,0.4); }
+
+  .stat-val {
+    font-size: 12px; color: var(--text-dim); letter-spacing: 0.05em;
+  }
+
+  .badge-winner {
+    font-size: 9px; letter-spacing: 0.2em;
+    padding: 3px 10px;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    background: rgba(0,229,255,0.08);
+  }
+
+  .badge-empty { font-size: 11px; color: var(--text-muted); }
+
+  /* ─── Session summary ─── */
+  .summary-strip {
+    width: 100%;
+    max-width: 800px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  .summary-item {
+    background: var(--bg-panel);
+    padding: 16px 20px;
+    text-align: center;
+  }
+
+  .summary-label {
+    font-size: 9px; letter-spacing: 0.3em;
+    color: var(--text-muted); text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .summary-value {
+    font-family: var(--font-title);
+    font-size: 22px;
+  }
+
+  .summary-value.cyan { color: var(--cyan); }
+  .summary-value.amber { color: var(--amber); }
+  .summary-value.text { color: var(--text); }
+
+  .summary-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+  /* ─── Action buttons ─── */
+  .action-row {
+    display: flex; gap: 16px;
+    align-items: center;
+  }
+
+  .btn-action {
+    font-family: var(--font-mono);
+    font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase;
+    padding: 16px 40px;
+    border: 1px solid;
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-rematch {
+    color: var(--cyan); border-color: var(--cyan);
+    box-shadow: inset 0 0 20px rgba(0,229,255,0.03);
+  }
+
+  .btn-rematch::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(0,229,255,0.1), transparent);
+    transform: translateX(-100%);
+    transition: transform 0.5s;
+  }
+
+  .btn-rematch:hover::before { transform: translateX(100%); }
+  .btn-rematch:hover {
+    background: rgba(0,229,255,0.08);
+    box-shadow: 0 0 24px rgba(0,229,255,0.3);
+  }
+
+  .btn-disband {
+    color: var(--text-dim); border-color: var(--border);
+  }
+
+  .btn-disband:hover {
+    color: var(--red); border-color: var(--red);
+    background: rgba(255,26,75,0.06);
+  }
+
+  .action-note {
+    font-size: 10px; color: var(--text-muted);
+    letter-spacing: 0.1em; text-align: center;
+  }
+
+  /* ─── Footer ─── */
+  .site-footer {
+    height: 36px;
+    display: flex; align-items: center;
+    padding: 0 32px;
+    border-top: 1px solid var(--border);
+    background: rgba(6,11,20,0.98);
+    flex-shrink: 0;
+  }
+
+  .footer-text {
+    font-size: 10px; color: var(--text-muted); letter-spacing: 0.15em;
+  }
+</style>
+</head>
+<body>
+<div class="winner-glow"></div>
+<div class="page">
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="breadcrumb">
+      <span class="logo">DEBUG ZERO</span>
+      <span class="sep">›</span>
+      <span class="crumb">ROOM ABC123</span>
+      <span class="sep">›</span>
+      <span class="crumb" style="color:var(--cyan);">SESSION RESULT</span>
+    </div>
+    <div class="header-right">
+      <span style="color:var(--text-muted);">Session Complete</span>
+      <span style="color:var(--text-dim);">3 Games Played</span>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Session ended label -->
+    <div class="session-ended-label">— Session Ended —</div>
+
+    <!-- Winner Block -->
+    <div class="winner-block">
+      <div class="winner-corner wc-tl"></div>
+      <div class="winner-corner wc-tr"></div>
+      <div class="winner-corner wc-bl"></div>
+      <div class="winner-corner wc-br"></div>
+
+      <div class="winner-tag">▶ Session Winner</div>
+      <div class="winner-name">Nakamura_K</div>
+      <div class="winner-subtitle">3 wins — First to reach target</div>
+      <div class="winner-strategy">Strategy Revealed: <span>Aggro</span></div>
+    </div>
+
+    <!-- Scoreboard -->
+    <div class="scoreboard">
+      <div class="scoreboard-header">
+        <span>#</span>
+        <span>Player</span>
+        <span>Wins</span>
+        <span>Games</span>
+        <span>Pips</span>
+        <span></span>
+      </div>
+
+      <!-- 1st -->
+      <div class="scoreboard-row winner-row">
+        <span class="rank-num first">1</span>
+        <div class="player-info">
+          <span class="player-info-name winner">Nakamura_K</span>
+          <span class="player-info-strategy">Strategy: <span class="strat-revealed">Aggro</span></span>
+        </div>
+        <div class="wins-display">
+          <span class="win-count high">3</span>
+        </div>
+        <span class="stat-val">3 / 3</span>
+        <div class="win-pips">
+          <div class="pip filled-cyan"></div>
+          <div class="pip filled-cyan"></div>
+          <div class="pip filled-cyan"></div>
+        </div>
+        <span class="badge-winner">▶ WINNER</span>
+      </div>
+
+      <!-- 2nd -->
+      <div class="scoreboard-row">
+        <span class="rank-num second">2</span>
+        <div class="player-info">
+          <span class="player-info-name">Yamada_T</span>
+          <span class="player-info-strategy">Strategy: <span class="strat-revealed">Control-Sub</span></span>
+        </div>
+        <div class="wins-display">
+          <span class="win-count mid">2</span>
+        </div>
+        <span class="stat-val">3 / 3</span>
+        <div class="win-pips">
+          <div class="pip filled"></div>
+          <div class="pip filled"></div>
+          <div class="pip"></div>
+        </div>
+        <span class="badge-empty">—</span>
+      </div>
+
+      <!-- 3rd -->
+      <div class="scoreboard-row">
+        <span class="rank-num third">3</span>
+        <div class="player-info">
+          <span class="player-info-name">Tanaka_R</span>
+          <span class="player-info-strategy">Strategy: <span class="strat-revealed">Hack</span></span>
+        </div>
+        <div class="wins-display">
+          <span class="win-count low">1</span>
+        </div>
+        <span class="stat-val">3 / 3</span>
+        <div class="win-pips">
+          <div class="pip filled"></div>
+          <div class="pip"></div>
+          <div class="pip"></div>
+        </div>
+        <span class="badge-empty">—</span>
+      </div>
+
+      <!-- 4th -->
+      <div class="scoreboard-row">
+        <span class="rank-num" style="color:var(--text-muted)">4</span>
+        <div class="player-info">
+          <span class="player-info-name" style="color:var(--text-dim);">Sato_M</span>
+          <span class="player-info-strategy">Strategy: <span class="strat-revealed">TrickStar</span></span>
+        </div>
+        <div class="wins-display">
+          <span class="win-count" style="color:var(--text-muted)">0</span>
+        </div>
+        <span class="stat-val">3 / 3</span>
+        <div class="win-pips">
+          <div class="pip"></div>
+          <div class="pip"></div>
+          <div class="pip"></div>
+        </div>
+        <span class="badge-empty">—</span>
+      </div>
+
+    </div>
+
+    <!-- Summary strip -->
+    <div class="summary-strip">
+      <div class="summary-item">
+        <div class="summary-label">Total Games</div>
+        <div class="summary-value text">3</div>
+        <div class="summary-sub">in this session</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Final Set#</div>
+        <div class="summary-value cyan">0</div>
+        <div class="summary-sub">Game 3 result</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Rule Set</div>
+        <div class="summary-value amber" style="font-size:16px;letter-spacing:0.1em;">BASIC</div>
+        <div class="summary-sub">v1.0</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-label">Room</div>
+        <div class="summary-value text" style="font-size:16px;letter-spacing:0.2em;">ABC123</div>
+        <div class="summary-sub">4 players</div>
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="action-row">
+      <button class="btn-action btn-rematch">↺ REMATCH</button>
+      <button class="btn-action btn-disband">✕ DISBAND ROOM</button>
+    </div>
+    <div class="action-note">Rematch returns to room lobby · Disband returns all players to top</div>
+
+  </div>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <span class="footer-text">ROOM: ABC123 · SESSION ENDED · RULE: BASIC · Winner: Nakamura_K</span>
+  </footer>
+</div>
+</body>
+</html>
