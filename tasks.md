@@ -10,8 +10,8 @@
 - [x] #3 ArithmeticJudge の実装
 - [x] #4 ActionValidator の実装
 - [x] #5 TurnManager / PhaseController の実装
-- [ ] #6 GameEngine (applyAction) の実装
-- [ ] #7 EffectRegistry / EffectResolver の実装
+- [x] #6 GameEngine (applyAction) の実装
+- [x] #7 EffectRegistry / EffectResolver の実装
 - [ ] #8 戦略カード効果ハンドラの実装 (8種)
 - [ ] #9 バグカード効果ハンドラの実装 (8種)
 - [ ] #10 RoomRepository / RoomService の実装
@@ -117,7 +117,7 @@ YAMLパーサーは js-yaml 等を使用する。
 
 ---
 
-### [ ] #6 GameEngine (applyAction) の実装
+### [x] #6 GameEngine (applyAction) の実装
 
 **依存:** #1, #3, #4, #5, #7
 
@@ -135,7 +135,7 @@ detail-design.md 第4章・第5章を参照。
 
 ## Phase 3: 効果システム
 
-### [ ] #7 EffectRegistry / EffectResolver の実装
+### [x] #7 EffectRegistry / EffectResolver の実装
 
 **依存:** #1
 
