@@ -16,6 +16,7 @@
     "@cloudflare/vite-plugin": "^1.2.3",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.0",
+    "typescript": "^5.9.3",
     "vite": "^6.3.5",
     "vite-ssr-components": "^0.5.2",
     "wrangler": "^4.17.0"
