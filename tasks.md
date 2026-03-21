@@ -8,7 +8,7 @@
 - [x] #1 共有型定義の実装 (shared/types/)
 - [x] #2 RuleSetLoader / RuleSetRegistry の実装
 - [x] #3 ArithmeticJudge の実装
-- [ ] #4 ActionValidator の実装
+- [x] #4 ActionValidator の実装
 - [ ] #5 TurnManager / PhaseController の実装
 - [ ] #6 GameEngine (applyAction) の実装
 - [ ] #7 EffectRegistry / EffectResolver の実装
@@ -76,7 +76,7 @@ YAMLパーサーは js-yaml 等を使用する。
 
 ---
 
-### [ ] #4 ActionValidator の実装
+### [x] #4 ActionValidator の実装
 
 **依存:** #1, #3
 

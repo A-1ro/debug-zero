@@ -55,7 +55,6 @@ export function resolve(
   currentSetNumber: number,
   card: Card,
   operation: Operation,
-  lastFieldCard: FieldCard | undefined,
   isAggroActive: boolean,
 ): ArithmeticJudgeResult {
   const rawValue       = card.value;
