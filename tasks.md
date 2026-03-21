@@ -12,8 +12,8 @@
 - [x] #5 TurnManager / PhaseController の実装
 - [x] #6 GameEngine (applyAction) の実装
 - [x] #7 EffectRegistry / EffectResolver の実装
-- [ ] #8 戦略カード効果ハンドラの実装 (8種)
-- [ ] #9 バグカード効果ハンドラの実装 (8種)
+- [x] #8 戦略カード効果ハンドラの実装 (8種)
+- [x] #9 バグカード効果ハンドラの実装 (8種)
 - [ ] #10 RoomRepository / RoomService の実装
 - [ ] #11 SessionService の実装
 - [ ] #12 WebSocket 基盤の実装
@@ -151,7 +151,7 @@ interface EffectContext { actorId: string; triggerCard?: FieldCard; targetId?: s
 
 ---
 
-### [ ] #8 戦略カード効果ハンドラの実装 (8種)
+### [x] #8 戦略カード効果ハンドラの実装 (8種)
 
 **依存:** #7
 
@@ -172,7 +172,7 @@ interface EffectContext { actorId: string; triggerCard?: FieldCard; targetId?: s
 
 ---
 
-### [ ] #9 バグカード効果ハンドラの実装 (8種)
+### [x] #9 バグカード効果ハンドラの実装 (8種)
 
 **依存:** #7
 

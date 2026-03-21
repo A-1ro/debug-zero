@@ -1,0 +1,19 @@
+import type { Game, GamePatch } from "../../../../shared/types/effects";
+import type { EffectContext } from "../../../../shared/types/effects";
+
+/**
+ * Control-Forbidden bug effect handler.
+ * Trigger: (suppression only — handler never called via EffectResolver)
+ *
+ * Suppresses all Control-* strategy handlers for the affected player.
+ * Enforcement is in EffectResolver's strategy loop via FORBIDDEN_BUG_STRATEGY_MAP.
+ *
+ * Removal cost: HP -3.
+ * (Cost is handled by GameEngine.applyRemoveBug via the bug's removalCost definition.)
+ *
+ * This handler is a no-op — suppression is in EffectResolver.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function controlForbidden(_game: Game, _ctx: EffectContext): GamePatch {
+  return {};
+}
