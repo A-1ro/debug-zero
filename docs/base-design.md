@@ -88,7 +88,7 @@ interface DeckConfig {
 interface StrategyDef {
   id: string;             // e.g. "Aggro"
   effect: EffectDef;
-  exclusionCondition?: ExclusionCondition; // e.g. Zero: 3人以上選択で無効
+  exclusionCondition?: ExclusionCondition; // e.g. Zero: 2人以上選択で無効
 }
 
 interface BugDef {

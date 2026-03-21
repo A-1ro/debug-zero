@@ -77,8 +77,6 @@ debug-zero/
     │   │       │   ├── aggro.ts
     │   │       │   ├── controlAdd.ts
     │   │       │   ├── controlSub.ts
-    │   │       │   ├── controlDiv.ts
-    │   │       │   ├── controlMul.ts
     │   │       │   ├── hack.ts
     │   │       │   ├── trickStar.ts
     │   │       │   └── zero.ts
@@ -263,12 +261,12 @@ type ConstraintDef =
   | { type: "no_retroactive" }        // 遡及禁止
   | { type: "card_parity"; parity: "odd" | "even" }  // 特定数字パリティで発動
   | { type: "strategy_match"; strategyId: StrategyId } // 特定戦略選択者にのみ有効
-  | { type: "selection_count_threshold"; min: number }; // Zero: 3人以上で無効
+  | { type: "selection_count_threshold"; min: number }; // Zero: 2人以上で無効
 
 // 除外条件（戦略カードが無効化されるルール）
 interface ExclusionCondition {
   type:  "selection_count_threshold";
-  min:   number;    // basic/Zero: 3
+  min:   number;    // basic/Zero: 2
 }
 
 // 除去コスト（バグカード除去時の支払い）
@@ -625,7 +623,7 @@ Room ──→ Session ──→ Game[]
   2. デッキシャッフル・手札配布（各 5 枚）
   3. セット数算出（gameIndex * 10）
   4. 残留バグ適用（前ゲームのバグが residualBugs に入っている場合）
-  5. Zero 戦略の有効性判定（3人以上選択の場合無効化イベントを記録）
+  5. Zero 戦略の有効性判定（2人以上選択の場合無効化イベントを記録）
   ─ 初期化完了 → [in-progress]
 
 [in-progress]
@@ -1071,7 +1069,7 @@ strategies:
         cardValue: 0
       exclusionCondition:
         type: selection_count_threshold
-        min: 3
+        min: 2
 
 bugs:
   - id: Odd-Forbidden
@@ -1222,7 +1220,7 @@ interface EffectRegistry {
 - **マイナス判定**: アクション適用後に `game.setNumber < 0` かつ Aggro プレイヤーが原因の場合、そのプレイヤーを即時敗北（`game.status = "finished"`, winnerId は他プレイヤー全員）
 - **Aggro-Forbidden との相互作用**: バグ有効時はハンドラをスキップし `effectiveValue = rawValue`
 
-#### Control-Add / Control-Sub / Control-Div / Control-Mul (`basic:controlAdd` 等)
+#### Control-Add / Control-Sub (`basic:controlAdd` 等)
 - **トリガー**: `on_card_played_by_other`（他プレイヤーがカードを出した時）
 - **タイミング**: カードが場に出た直後・演算適用前に発動可能
 - **遡及禁止**: `game.field` の最新カード（= 今出たカード）にのみ適用可能
@@ -1243,7 +1241,7 @@ interface EffectRegistry {
 #### Zero (`basic:zero`)
 - **トリガー**: `on_game_start`
 - **処理**: 山札から 0 のカードを 1 枚取り出し `game.hands[actorId]` に追加
-- **無効化条件**: セッション内で Zero を選んだプレイヤーが 3 人以上の場合、全員の Zero を無効化（`strategy_invalidated` イベントを記録）
+- **無効化条件**: セッション内で Zero を選んだプレイヤーが 2 人以上の場合、全員の Zero を無効化（`strategy_invalidated` イベントを記録）
 - **無効化判定タイミング**: `game` 開始時（`on_game_start` トリガー処理前）
 
 ### 8.5 各バグカード効果の詳細仕様
