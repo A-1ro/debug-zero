@@ -14,7 +14,7 @@
 - [x] #7 EffectRegistry / EffectResolver の実装
 - [x] #8 戦略カード効果ハンドラの実装 (8種)
 - [x] #9 バグカード効果ハンドラの実装 (8種)
-- [ ] #10 RoomRepository / RoomService の実装
+- [x] #10 RoomRepository / RoomService の実装
 - [ ] #11 SessionService の実装
 - [ ] #12 WebSocket 基盤の実装
 - [ ] #13 Hono サーバエントリポイントの実装
@@ -195,7 +195,7 @@ interface EffectContext { actorId: string; triggerCard?: FieldCard; targetId?: s
 
 ## Phase 4: サーバ基盤
 
-### [ ] #10 RoomRepository / RoomService の実装
+### [x] #10 RoomRepository / RoomService の実装
 
 **依存:** #1
 
