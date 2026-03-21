@@ -5,8 +5,8 @@
 
 ## 進捗サマリー
 
-- [ ] #1 共有型定義の実装 (shared/types/)
-- [ ] #2 RuleSetLoader / RuleSetRegistry の実装
+- [x] #1 共有型定義の実装 (shared/types/)
+- [x] #2 RuleSetLoader / RuleSetRegistry の実装
 - [ ] #3 ArithmeticJudge の実装
 - [ ] #4 ActionValidator の実装
 - [ ] #5 TurnManager / PhaseController の実装

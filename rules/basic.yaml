@@ -1,125 +1,308 @@
-基本概念:
-  - ルールの大枠: 手持ちの0~9のカードを使って、規定の数字を0にするゲーム。
-  - カードの種類: 0~9の数字カード、戦略カード、バグカード
-  - 勝利条件: 規定の数字を0にするゲームを繰り返し、最終的に勝利数が3に達したプレイヤーが勝利する。
-  - プレイ人数: 4人推奨
-数字カード構成:
-  - 0: 2枚
-  - 1: 4枚
-  - 2: 4枚
-  - 3: 4枚
-  - 4: 4枚
-  - 5: 4枚
-  - 6: 4枚
-  - 7: 4枚
-  - 8: 4枚
-  - 9: 4枚
-戦略カード構成:
-  - Aggro: 場に出したカードで計算するとき、自身の出したカードの数は常に倍になる。ただし、この計算によってマイナスになった場合は即座にそのゲームから敗北する。
-  - Control-Add: 任意の減算として出されたカードを、加算に変更することができる。ただしこの効果は1ゲームに一度しか使用できない。また、遡って使用することはできない。
-  - Control-Sub: 任意の加算として出されたカードを、減算に変更することができる。ただしこの効果は1ゲームに一度しか使用できない。また、遡って使用することはできない。
-  - Hack: 偶数のカードが場に出た時、そのカードを奪って自分の計算として扱うことができる。ただしこの効果は1ゲームに一度しか使用できない。また、遡って使用することはできない。
-  - TrickStar: 奇数のカードが場に出た時、そのカードをゲームから取り除き、計算をなかったことにできる。ただしこの効果は1ゲームに一度しか使用できない。また、遡って使用することはできない。
-  - Zero: ゲーム開始時、山札から自分の手札に1枚0のカードを加えることができる。ただし、この戦略が2人以上のプレイヤーから選択された場合、この戦略は無効となる。
-バグカード構成:
-  - Odd-Forbidden:
-      - 効果: 「奇数」のカードの使用を禁止する。
-      - 除去コスト: 「偶数」 -3
-  - Even-Forbidden:
-      - 効果: 「偶数」のカードの使用を禁止する。
-      - 除去コスト: 「奇数」 -3
-  - Stack-Forbidden:
-      - 効果: 直前に出された数字と同じ数字を出すことを禁止する。
-      - 除去コスト: HP -3
-  - Aggro-Forbidden:
-      - 効果: これはAggroを選択したプレイヤーにのみ有効。場に出したカードは全て等倍で計算される。
-      - 除去コスト: HP -3
-  - Control-Forbidden:
-      - 効果: これはControl-Add, Control-Subを選択したプレイヤーにのみ有効。場に出したカードの計算を変更することができなくなる。
-      - 除去コスト: HP -3
-  - Hack-Forbidden:
-      - 効果: これはHackを選択したプレイヤーにのみ有効。偶数のカードが場に出ても、そのカードを奪うことができなくなる。
-      - 除去コスト: HP -3
-  - TrickStar-Forbidden:
-      - 効果: これはTrickStarを選択したプレイヤーにのみ有効。奇数のカードが場に出ても、そのカードをゲームから取り除くことができなくなる。
-      - 除去コスト: HP -3
-  - Value-Corruption:
-      - 効果: ボスが出すカードの数字は全て「10」として扱われる。このバグが残留した場合、次のゲームでは全てのカードが「10」として扱われる。
-      - 除去コスト: HP -1、任意の数字カード -1
-ゲームの流れ:
-  - OverView:
-      - このゲームは、単位として「セッション」と「ゲーム」が存在する。セッションは複数のゲームで構成され、プレイヤーはセッションを通じて勝利数を競う。
-      - 各ゲームは、プレイヤーが手札からカードを出し合い、規定の数字を0にすることを目指す。ゲームは、プレイヤーが規定の数字を0にした時点で終了し、そのプレイヤーが勝利する。
-  - セッション開始:
-      - プレイヤーは、セッション開始前に自分の戦略カードを選択する。戦略カードは、プレイヤーのプレイスタイルや戦術に大きな影響を与えるため、慎重に選ぶ必要がある。
-      - 戦略カードの選択は、セッション全体を通じて有効であり、プレイヤーは選択した戦略カードの効果を最大限に活用することが求められる。
-  - ゲーム開始:
-      - ゲームの手番を決定する。各プレイヤーはランダムに選ばれたカード1枚を出し合い、最も大きな数字を出したプレイヤーが最初の手番を得る。以降、時計回りに手番が進む。
-      - 各プレイヤーは、ゲーム開始時に数字カードの山札から5枚のカードを引いて手札とする。これらのカードは、プレイヤーがゲーム中に使用することができる。
-      - 規定の数字(以降セット数)を算出する。セット数は以下の方法で決定される:
-          - 現在のゲーム数*10=セット数
-          - 例: 1ゲーム目は10、2ゲーム目は20、3ゲーム目は30、4ゲーム目は40、5ゲーム目は50
-      - プレイヤーは、セット数を0にすることを目指して、手札からカードを出し合う。カードを出す際には、以下のルールに従う必要がある:
-          - プレイヤーは、手札から1枚のカードを選び、場に出すことができる。カードを出す際には、カードの数字をセット数から減算するか、加算することが基本的なルールである。
-          - ただし、直前に出されたカードと同じカードを出した場合のみ、乗算や除算を行うことができる。
-          - プレイヤーは、戦略カードの効果を活用して、カードの出し方を工夫することができる。例えば、Aggroを選択したプレイヤーは、出すカードの数を倍にすることができるため、より大きな数字をセット数から減算することができる。
-          - 自分の手番をスキップすることはできない。
-          - カードを出した後、山札から1枚カードを引いて手札を補充する。
-          - セット数が負数になった場合も、ゲームは続行される。プレイヤーは、セット数を0にすることを目指して、手札からカードを出し合うことになる。
-      - プレイヤーの手番を繰り返し、セット数が0になった場合は、0にしたプレイヤーがゲームの勝者となるが、一部例外が存在する。:
-          - 山札が尽きた場合: 即座に決戦フェーズへ移行する。
-          - プレイヤーが0のカードを出した場合: そのプレイヤーはゲームの盤面をリセットするか、レイド戦に移行するかを選択できる。盤面をリセットした場合、セット数は再度算出され、全プレイヤーの手札は新たに5枚引き直される。リセットに使用した0のカードはゲームから除外される。つまり、ゲーム内のリセット上限数は2である。レイド戦に移行した場合、その他のプレイヤーはボス(0を出したプレイヤー)と対戦することになる。
-  - 決戦フェーズ:
-      - 山札が尽きた場合、即座に決戦フェーズへ移行する。
-      - 決戦フェーズルール:
-          - 現在のセット数を確認する。
-          - 各プレイヤーは現在の手札から2枚までのカードを選出し、そのカードを使って任意の四則演算を行うことができる。
-          - プレイヤーは、選出したカードを使って、現在のセット数に最も近い数字を作り出すことを目指す。例えば、セット数が15の場合、プレイヤーは選出したカードを使って14や16などの数字を作り出すことができる。
-          - 現在のセット数に最も近い数字を作り出したプレイヤーの勝利となる。もし複数のプレイヤーが同じ数字を出していた場合は、使用したカードの枚数が少ないプレイヤーが勝者となる。枚数も同じだった場合は、それらのプレイヤーが勝者となる。
-  - レイド戦:
-      - プレイヤーが0のカードを出した場合、そのプレイヤーはゲームの盤面をリセットするか、レイド戦に移行するかを選択できる。
-      - レイド戦ルール:
-          - レイド戦に移行した場合、その他のプレイヤーはボス(0を出したプレイヤー)と対戦することになる。
-          - 場に出ている全てのカードの数字の合計値を算出する。それがボスのHPとなる。HP算出の際、数値はカードの額面上の数値を参照する。例えば、Aggroを選択したプレイヤーが場に出したカードは全て倍の数値として扱われるが、HP算出の際には倍になる前の数値を参照する。
-          - 各プレイヤーのHPは10となる。
-          - ボスのプレイヤーが選択した戦略カードは、レイド戦中は無効となる。
-          - 場に出ていたカードは全て山札に戻し、シャッフルされる。手札は現在のままで続行される。
-          - レイド戦は、プレイヤーがボスのHPを0にすることを目指す。プレイヤーは、手札からカードを出し合い、ボスのHPを減らすことができる。プレイヤーがカードを出す際には、以下のルールに従う必要がある:
-              - プレイヤーは、手札から1枚のカードを選び、場に出すことができる。カードを出す際には、カードの数字をボスのHP、もしくは他のプレイヤーのHPから減算、加算することが基本的なルールである。
-              - ただし、直前に出されたカードと同じカードを出した場合のみ、乗算や除算を行うことができる。
-              - プレイヤーは、戦略カードの効果を活用して、カードの出し方を工夫することができる。例えば、Aggroを選択したプレイヤーは、出すカードの数を倍にすることができるため、より大きな数字をボスのHPから減算することができる。
-              - 自分の手番をスキップすることはできない。
-      - ラウンド進行:
-          - ボスはバグカードの中から1枚選択し、その効果を発動することができる。
-          - プレイヤーはそのラウンドの手番を1D10で決定する。出目が大きいプレイヤーから順に手番が回る。
-          - プレイヤーは自身の手番で以下から1つの行動を選択することができる:
-              - カードを出す: 手札から1枚のカードを選び、場に出すことができる。カードを出す際には、カードの数字をボスのHP、もしくは他のプレイヤーのHPから減算、加算することが基本的なルールである。ただし、直前に出されたカードと同じカードを出した場合のみ、乗算や除算を行うことができる。
-              - バグを除去する: ボスが選択したバグカードの除去コストを支払うことで、そのバグカードをゲームから取り除くことができる。バグカードの除去コストは、HPの減少や手札からのカードの減少など、様々な形で表される。
-              - 手札を補充する: 山札から1枚カードを引いて手札を補充することができる。ただし、手札の上限は5枚であるため、手札が5枚の状態でこの行動を選択することはできない。
-          - ラウンドの最後にボスが行動する。ボスは「現在のプレイヤー数/2(端数切り上げ)」の分だけ行動を行うことができる。ボスが行えることは「カードを出す」ことである。ボスは、手札から1枚のカードを選び、場に出すことができる。カードを出す際には、カードの数字をプレイヤーのHPから減算、加算することが基本的なルールである。ただし、直前に出されたカードと同じカードを出した場合のみ、乗算や除算を行うことができる。
-          - ボスは使用したカードの枚数分だけ、山札からカードを引いて手札を補充する。
-          - 山札が尽きた場合、場に出ているカードを全て山札に戻し、シャッフルする。
-      - レイド戦の終了条件:
-          - プレイヤーがボスのHPを0以下にした場合、レイド戦は終了し、以下のルールに従って勝者が決定される:
-              - ボスのHPがピッタリ0になった場合: 生存しているプレイヤーの勝利数を+1する。
-              - ボスのHPが0未満になった場合: トドメを刺したプレイヤーの勝利数を+1する。また、その時適用されていたバグが次のゲームに残留する。
-          - プレイヤー全員のHPが0以下になった場合、レイド戦は終了し、ボスのプレイヤーがセッションの勝者となる。
-      - バグ残留について:
-          - レイド戦でプレイヤーがボスのHPを0未満にした場合、その時適用されていたバグが次のゲームに残留する。
-          - バグが残留した場合、次のゲームの開始時に、そのバグの効果が発動する。例えば、Value-Corruptionが残留した場合、次のゲームでは全てのカードが「10」として扱われる。
-          - バグが残留した場合、そのバグを除去することはできない。
-          - 残留したバグの残留期間は1ゲームである。レイド戦に移行した場合は残留したバグが消える。
+id: basic
+version: "1.0.0"
 
-四則演算裁定:
-  - 左辺: セット数、もしくはHP
-  - 右辺: 出されたカードの数字
-  - 加算: いつでも可能
-  - 減算: いつでも可能
-  - 乗算: 直前に出されたカードと同じカードを出した場合のみ可能(同じカードの基準は額面上の数値)
-  - 除算: 直前に出されたカードと同じカードを出した場合のみ可能(同じカードの基準は額面上の数値)
-  - 除算における端数の扱い: 常に切り上げ
+deck:
+  cards:
+    - value: 0
+      count: 2
+    - value: 1
+      count: 4
+    - value: 2
+      count: 4
+    - value: 3
+      count: 4
+    - value: 4
+      count: 4
+    - value: 5
+      count: 4
+    - value: 6
+      count: 4
+    - value: 7
+      count: 4
+    - value: 8
+      count: 4
+    - value: 9
+      count: 4
 
-不文律ルール:
-  - プレイヤー同士のコミュニケーションは、ゲームの進行を円滑にするために重要である。プレイヤーは、他のプレイヤーと協力して戦略を立てたり、情報を共有したりすることが奨励される。
-  - プレイヤー同士の交渉は自由とする。例えば、1のカードを持っているプレイヤーが、他のプレイヤーに対して「1のカードを渡す代わりに、次のゲームで協力する」といった交渉を行うことができる。
-  - プレイヤー同士の交渉の際、ゲーム内で解決できない交渉を行うことは禁止する。例えば「このセッションの後ご飯を奢る」といった交渉は、ゲーム内で解決できないため禁止する。
+strategies:
+  - id: Aggro
+    effect:
+      id: "basic:aggro"
+      trigger:
+        type: on_card_played
+      target:
+        type: self
+      action:
+        type: multiply_effective_value
+        factor: 2
+      usageLimit: null
+
+  - id: Control-Add
+    effect:
+      id: "basic:controlAdd"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: change_operation
+        from: sub
+        to: add
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+      usageLimit: 1
+
+  - id: Control-Sub
+    effect:
+      id: "basic:controlSub"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: change_operation
+        from: add
+        to: sub
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+      usageLimit: 1
+
+  - id: Control-Div
+    effect:
+      id: "basic:controlDiv"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: change_operation
+        from: mul
+        to: div
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+      usageLimit: 1
+
+  - id: Control-Mul
+    effect:
+      id: "basic:controlMul"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: change_operation
+        from: div
+        to: mul
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+      usageLimit: 1
+
+  - id: Hack
+    effect:
+      id: "basic:hack"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: steal_card
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+        - type: card_parity
+          parity: even
+      usageLimit: 1
+
+  - id: TrickStar
+    effect:
+      id: "basic:trickStar"
+      trigger:
+        type: on_card_played_by_other
+      target:
+        type: field_card
+      action:
+        type: remove_field_card
+      constraints:
+        - type: usage_limit_per_game
+          limit: 1
+        - type: no_retroactive
+        - type: card_parity
+          parity: odd
+      usageLimit: 1
+
+  - id: Zero
+    effect:
+      id: "basic:zero"
+      trigger:
+        type: on_game_start
+      target:
+        type: hand
+      action:
+        type: add_card_to_hand
+        cardValue: 0
+    exclusionCondition:
+      type: selection_count_threshold
+      min: 2
+
+bugs:
+  - id: Odd-Forbidden
+    effect:
+      id: "basic:oddForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: forbid_card_parity
+        parity: odd
+    removalCost:
+      type: hand_card
+      value: even
+      amount: 1
+
+  - id: Even-Forbidden
+    effect:
+      id: "basic:evenForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: forbid_card_parity
+        parity: even
+    removalCost:
+      type: hand_card
+      value: odd
+      amount: 1
+
+  - id: Stack-Forbidden
+    effect:
+      id: "basic:stackForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: forbid_stack
+    removalCost:
+      type: hp
+      amount: 3
+
+  - id: Aggro-Forbidden
+    effect:
+      id: "basic:aggroForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: invalidate_strategy
+      constraints:
+        - type: strategy_match
+          strategyId: Aggro
+    removalCost:
+      type: hp
+      amount: 3
+
+  - id: Control-Forbidden
+    effect:
+      id: "basic:controlForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: invalidate_strategy
+      constraints:
+        - type: strategy_match
+          strategyId: Control-Add
+    removalCost:
+      type: hp
+      amount: 3
+
+  - id: Hack-Forbidden
+    effect:
+      id: "basic:hackForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: invalidate_strategy
+      constraints:
+        - type: strategy_match
+          strategyId: Hack
+    removalCost:
+      type: hp
+      amount: 3
+
+  - id: TrickStar-Forbidden
+    effect:
+      id: "basic:trickStarForbidden"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: invalidate_strategy
+      constraints:
+        - type: strategy_match
+          strategyId: TrickStar
+    removalCost:
+      type: hp
+      amount: 3
+
+  - id: Value-Corruption
+    effect:
+      id: "basic:valueCorruption"
+      trigger:
+        type: always
+      target:
+        type: all_players
+      action:
+        type: override_card_value
+        value: 10
+    removalCost:
+      type: composite
+      costs:
+        - type: hp
+          amount: 1
+        - type: hand_card
+          value: any
+          amount: 1
+
+phases:
+  - id: normal
+    transitionConditions:
+      - type: deck_empty
+        to: showdown
+      - type: card_zero_played
+        to: raid
+
+  - id: showdown
+    transitionConditions: []
+
+  - id: raid
+    transitionConditions:
+      - type: boss_hp_zero_or_less
+        to: finished
+      - type: all_players_hp_zero_or_less
+        to: session_win_boss
+
+winCondition:
+  winsRequired: 3
+
+initialConfig:
+  recommendedPlayers: 4
+  initialHandSize: 5
+  initialHP: 10
+  setNumberFormula: "gameIndex * 10"
