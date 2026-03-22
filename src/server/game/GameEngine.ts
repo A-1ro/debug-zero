@@ -115,11 +115,154 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
 }
 
 // ============================================================
+// play_card (raid phase)
+// ============================================================
+
+function applyPlayCardRaid(game: Game, action: PlayCardAction, ctx: EngineContext): Game {
+  const { actorId, ruleSet, playerStrategies, effectResolver } = ctx;
+  if (!game.raidState) return game;
+
+  const value = cardValueFromId(action.cardId);
+  const card: Card = { id: action.cardId, value };
+  const isAggroActive =
+    playerStrategies[actorId] === "Aggro" &&
+    !game.residualBugs.includes("Aggro-Forbidden");
+
+  const isBoss = actorId === game.raidState.bossPlayerId;
+  const hpBase = isBoss
+    ? (game.raidState.playerHPs[action.targetId as string] ?? 0)
+    : game.raidState.bossHP;
+
+  const arith = arithmeticResolve(hpBase, card, action.operation, isAggroActive);
+
+  const fieldCard: FieldCard = {
+    cardId:         action.cardId,
+    playerId:       actorId,
+    operation:      action.operation,
+    rawValue:       arith.rawValue,
+    effectiveValue: arith.effectiveValue,
+  };
+
+  const newHand = (game.hands[actorId] ?? []).filter((id) => id !== action.cardId);
+
+  let updatedRaidState = { ...game.raidState };
+  if (isBoss) {
+    const targetId = action.targetId as PlayerId;
+    updatedRaidState = {
+      ...updatedRaidState,
+      playerHPs: { ...updatedRaidState.playerHPs, [targetId]: arith.after },
+      bossActionsLeft: updatedRaidState.bossActionsLeft - 1,
+    };
+  } else {
+    updatedRaidState = { ...updatedRaidState, bossHP: arith.after };
+  }
+
+  let gameAfterCard = applyPatch(game, {
+    field:     [...game.field, fieldCard],
+    hands:     { ...game.hands, [actorId]: newHand },
+    raidState: updatedRaidState,
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "card_played",
+      actorId,
+      payload: {
+        cardId:         action.cardId,
+        operation:      action.operation,
+        rawValue:       arith.rawValue,
+        effectiveValue: arith.effectiveValue,
+        hpBefore:       hpBase,
+        hpAfter:        arith.after,
+        target:         isBoss ? (action.targetId ?? "unknown") : "boss",
+      },
+    }],
+  });
+
+  // Effect resolution
+  const effectCtx: EffectContext = {
+    actorId,
+    triggerCard: fieldCard,
+    targetId:    action.targetId,
+    ruleSet,
+  };
+  const ownPatch   = effectResolver.resolve(gameAfterCard, "on_card_played",          effectCtx, playerStrategies);
+  gameAfterCard    = applyPatch(gameAfterCard, ownPatch);
+  const otherPatch = effectResolver.resolve(gameAfterCard, "on_card_played_by_other", effectCtx, playerStrategies);
+  gameAfterCard    = applyPatch(gameAfterCard, otherPatch);
+
+  // Check raid phase win conditions
+  const transition = checkPhaseTransition(gameAfterCard, ruleSet.phases);
+  if (transition && isTerminalTransition(transition.to)) {
+    const winnerId =
+      transition.to === "session_win_boss"
+        ? gameAfterCard.raidState?.bossPlayerId
+        : undefined; // players collectively win — no single winnerId
+    return applyPatch(gameAfterCard, {
+      status:   "finished",
+      winnerId,
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "game_ended",
+        actorId:   "system",
+        payload:   { reason: transition.conditionType, to: transition.to },
+      }],
+    });
+  }
+
+  // Advance raid turn
+  let nextRaidState = gameAfterCard.raidState!;
+  if (isBoss) {
+    if (nextRaidState.bossActionsLeft <= 0) {
+      // Boss done — start next raid round
+      nextRaidState = {
+        ...nextRaidState,
+        currentTurnIndex: 0,
+        roundIndex:       nextRaidState.roundIndex + 1,
+        bossActionsLeft:  Math.ceil(game.turnOrder.length / 2),
+        activeBugId:      "", // cleared; DO will assign new bug at round start
+      };
+    }
+  } else {
+    const nextIdx = nextRaidTurnIndex(
+      nextRaidState.currentTurnIndex,
+      nextRaidState.turnOrder,
+    );
+    nextRaidState = { ...nextRaidState, currentTurnIndex: nextIdx };
+  }
+
+  gameAfterCard = applyPatch(gameAfterCard, {
+    raidState:        nextRaidState,
+    currentTurnIndex: nextTurnIndex(gameAfterCard),
+  });
+
+  // Draw replacement card
+  if (gameAfterCard.deck.length > 0) {
+    const [drawnCard, ...remainingDeck] = gameAfterCard.deck;
+    const updatedHand = [...(gameAfterCard.hands[actorId] ?? []), drawnCard];
+    gameAfterCard = applyPatch(gameAfterCard, {
+      deck:  remainingDeck,
+      hands: { ...gameAfterCard.hands, [actorId]: updatedHand },
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "card_drawn",
+        actorId,
+        payload:   { cardId: drawnCard },
+      }],
+    });
+  }
+
+  return gameAfterCard;
+}
+
+// ============================================================
 // play_card
 // ============================================================
 
 function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): Game {
-  const { actorId, ruleSet, playerStrategies, effectResolver, rng = Math.random } = ctx;
+  if (game.phase === "raid") return applyPlayCardRaid(game, action, ctx);
+  const { actorId, ruleSet, playerStrategies, effectResolver } = ctx;
   const value = cardValueFromId(action.cardId);
   const card: Card = { id: action.cardId, value };
 

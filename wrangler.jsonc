@@ -2,5 +2,19 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "debug-zero",
   "compatibility_date": "2025-08-03",
-  "main": "./src/index.tsx"
+  "main": "./src/index.tsx",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_ROOM",
+        "class_name": "GameRoomDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["GameRoomDO"]
+    }
+  ]
 }
