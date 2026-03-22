@@ -225,14 +225,4 @@ export class RuleSetLoader {
     globalRuleSetRegistry.register(ruleSet);
     return ruleSet;
   }
-
-  /**
-   * Load a YAML file from the filesystem (Node.js / Cloudflare Workers with FS binding).
-   * In Cloudflare Workers, pass file contents directly via loadFromYaml.
-   */
-  static async loadFromFile(filePath: string): Promise<RuleSet> {
-    const { readFile } = await import("node:fs/promises");
-    const text = await readFile(filePath, "utf8");
-    return RuleSetLoader.loadFromYaml(text);
-  }
 }

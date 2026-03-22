@@ -517,17 +517,20 @@ export class GameRoomDO {
       visibility: "all",
     });
 
-    // Send updated hand to each player
+    // Send full game state to each player so turn/field/phase stay in sync
     for (const ws2 of this.state.getWebSockets()) {
       const att2 = ws2.deserializeAttachment() as WSAttachment | null;
       if (!att2) continue;
       const pid2 = att2.playerId;
       this.sendTo(ws2, {
         id:             msgId(),
-        type:           "server:hand_updated",
+        type:           "server:state_sync",
         roomId:         this.room.id,
-        gameId:         this.game.id,
-        payload:        { hand: this.game.hands[pid2] ?? [] },
+        payload: {
+          room:    this.room,
+          session: this.session,
+          game:    buildGameView(this.game, pid2),
+        },
         visibility:     "player",
         targetPlayerId: pid2,
       });

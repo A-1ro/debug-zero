@@ -99,6 +99,7 @@ export function createGame(params: {
     currentTurnIndex: 0,
     resetCount: 0,
     residualBugs: [],
+    eliminatedPlayers: [],
     events: [],
   };
 
@@ -134,6 +135,7 @@ export function buildGameView(game: Game, playerId: PlayerId): GameView {
     currentTurnIndex: game.currentTurnIndex,
     resetCount: game.resetCount,
     residualBugs: game.residualBugs,
+    eliminatedPlayers: game.eliminatedPlayers,
     raidState: game.raidState,
     events: game.events,
   };

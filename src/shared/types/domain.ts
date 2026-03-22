@@ -116,6 +116,7 @@ export interface Game {
   currentTurnIndex:    number;
   resetCount:          number;
   residualBugs:        BugId[];
+  eliminatedPlayers:   PlayerId[];
   raidState?:          RaidState;
   winnerId?:           PlayerId;
   events:              EventLog[];
@@ -202,11 +203,13 @@ export interface GamePatch {
   field?:                FieldCard[];
   hands?:                Record<PlayerId, CardId[]>;
   usedStrategyCounts?:   Record<PlayerId, Record<StrategyId, number>>;
+  turnOrder?:            PlayerId[];
   currentTurnIndex?:     number;
   resetCount?:           number;
   raidState?:            RaidState | null;
   winnerId?:             PlayerId;
   residualBugs?:         BugId[];
+  eliminatedPlayers?:    PlayerId[];
   appendEvents?:         EventLog[];
 }
 
@@ -230,6 +233,7 @@ export type EventType =
   | "raid_round_started"
   | "hp_changed"
   | "card_drawn"
+  | "player_eliminated"
   | "game_ended"
   | "session_ended"
   | "negotiation_declared"
@@ -250,19 +254,20 @@ export interface EventLog {
 // ============================================================
 
 export interface GameView {
-  id:               GameId;
-  gameIndex:        number;
-  setNumber:        number;
-  phase:            PhaseId;
-  status:           GameStatus;
-  deckCount:        number;
-  field:            FieldCard[];
-  hand:             CardId[];
-  handCounts:       Record<PlayerId, number>;
-  turnOrder:        PlayerId[];
-  currentTurnIndex: number;
-  resetCount:       number;
-  residualBugs:     BugId[];
-  raidState?:       RaidState;
-  events:           EventLog[];
+  id:                GameId;
+  gameIndex:         number;
+  setNumber:         number;
+  phase:             PhaseId;
+  status:            GameStatus;
+  deckCount:         number;
+  field:             FieldCard[];
+  hand:              CardId[];
+  handCounts:        Record<PlayerId, number>;
+  turnOrder:         PlayerId[];
+  currentTurnIndex:  number;
+  resetCount:        number;
+  residualBugs:      BugId[];
+  eliminatedPlayers: PlayerId[];
+  raidState?:        RaidState;
+  events:            EventLog[];
 }

@@ -17,7 +17,8 @@ export function RoomPage({ roomId }: { roomId: string }) {
           <div class="card panel lobby-actions">
             <div id="strategy-select-panel" class="hidden">
               <h3 class="panel-title">SELECT_STRATEGY</h3>
-              <select id="strategy-select" class="input select"></select>
+              <div id="strategy-cards" class="strategy-cards"></div>
+              <button id="btn-confirm-strategy" class="btn btn-primary" style="margin-top:12px" disabled>CONFIRM_STRATEGY</button>
             </div>
 
             <div class="lobby-buttons">
@@ -56,6 +57,11 @@ export function RoomPage({ roomId }: { roomId: string }) {
             <div class="card panel bugs-panel">
               <h3 class="panel-title">ACTIVE_BUGS</h3>
               <div id="bug-list" class="bug-list"></div>
+            </div>
+
+            <div class="card panel players-panel">
+              <h3 class="panel-title">PLAYERS</h3>
+              <ul id="game-player-list" class="player-list"></ul>
             </div>
           </div>
 
@@ -143,6 +149,17 @@ export function RoomPage({ roomId }: { roomId: string }) {
   }
 
   // ── State ──────────────────────────────────────────────────
+  var STRATEGIES = [
+    { id: 'Aggro',       tag: 'SELF · ∞',    desc: "自分が出したカードの効果値を2倍にする。" },
+    { id: 'Control-Add', tag: 'REACT · ×1',  desc: "相手が出したカードの演算を加算に強制変換する。1回限り。" },
+    { id: 'Control-Sub', tag: 'REACT · ×1',  desc: "相手が出したカードの演算を減算に強制変換する。1回限り。" },
+    { id: 'Control-Mul', tag: 'REACT · ×1',  desc: "相手が出したカードの演算を乗算に強制変換する。1回限り。" },
+    { id: 'Control-Div', tag: 'REACT · ×1',  desc: "相手が出したカードの演算を除算に強制変換する。1回限り。" },
+    { id: 'Hack',        tag: 'STEAL · ×1',  desc: "相手が出した偶数カードの所有権を奪い取る。1回限り。" },
+    { id: 'TrickStar',   tag: 'ERASE · ×1',  desc: "相手が出した奇数カードを消去し、計算を巻き戻す。1回限り。" },
+    { id: 'Zero',        tag: 'INIT · COND', desc: "ゲーム開始時に0カードを手札に加える。2人以上が選択した場合は無効。" },
+  ];
+
   var state = {
     room: null,
     session: null,
@@ -150,6 +167,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
     hand: [],
     readyPlayerIds: [],
     playerStrategies: {},
+    selectedStrategyId: null,
     selectedCard: null,
     pendingResetOrRaid: false,
     isMyTurn: false,
@@ -265,27 +283,48 @@ export function RoomPage({ roomId }: { roomId: string }) {
       var li = document.createElement('li');
       li.className = 'player-item';
       var ready = state.readyPlayerIds.includes(p.id);
-      var strategy = state.playerStrategies[p.id] || '—';
       var isHost = p.id === state.room.hostPlayerId;
+      // During strategy-selection, show only whether selected (not the strategy itself)
+      var strategyDisplay = state.room.status === 'strategy-selection'
+        ? (state.playerStrategies[p.id] ? '[LOCKED]' : '—')
+        : (state.playerStrategies[p.id] || '—');
       li.innerHTML =
         '<span class="player-status ' + (ready ? 'ready' : 'waiting') + '">●</span>' +
         '<span class="player-name">' + escHtml(p.name) + (isHost ? ' [HOST]' : '') + '</span>' +
-        '<span class="player-strategy mono">' + escHtml(strategy) + '</span>';
+        '<span class="player-strategy mono">' + escHtml(strategyDisplay) + '</span>';
       list.appendChild(li);
     });
 
-    // Strategy select (show when room is in strategy-selection)
+    // Strategy cards (show when room is in strategy-selection and player hasn't selected yet)
     var stratPanel = document.getElementById('strategy-select-panel');
-    var stratSel = document.getElementById('strategy-select');
+    var stratCardsEl = document.getElementById('strategy-cards');
+    var btnConfirm = document.getElementById('btn-confirm-strategy');
     if (state.room.status === 'strategy-selection' && !state.playerStrategies[playerId]) {
       stratPanel.classList.remove('hidden');
-      if (stratSel.options.length === 0) {
-        // Populate options (hardcoded from basic ruleset for now)
-        ['Aggro','Control-Add','Control-Sub','Control-Mul','Control-Div','Hack','TrickStar','Zero'].forEach(function(s) {
-          var opt = document.createElement('option');
-          opt.value = s; opt.textContent = s;
-          stratSel.appendChild(opt);
+      if (stratCardsEl.children.length === 0) {
+        STRATEGIES.forEach(function(s) {
+          var card = document.createElement('div');
+          card.className = 'strategy-card';
+          card.dataset.strategyId = s.id;
+          card.innerHTML =
+            '<div class="strategy-card-name">' + escHtml(s.id) + '</div>' +
+            '<div class="strategy-card-tag">' + escHtml(s.tag) + '</div>' +
+            '<div class="strategy-card-desc">' + escHtml(s.desc) + '</div>';
+          card.addEventListener('click', function() {
+            state.selectedStrategyId = s.id;
+            stratCardsEl.querySelectorAll('.strategy-card').forEach(function(c) {
+              c.classList.toggle('selected', c.dataset.strategyId === s.id);
+            });
+            btnConfirm.disabled = false;
+          });
+          stratCardsEl.appendChild(card);
         });
+      } else {
+        // Sync selected state on re-render
+        stratCardsEl.querySelectorAll('.strategy-card').forEach(function(c) {
+          c.classList.toggle('selected', c.dataset.strategyId === state.selectedStrategyId);
+        });
+        btnConfirm.disabled = !state.selectedStrategyId;
       }
     } else {
       stratPanel.classList.add('hidden');
@@ -322,6 +361,7 @@ export function RoomPage({ roomId }: { roomId: string }) {
     renderField(g.field || []);
     renderHand();
     renderBugs(g.residualBugs || []);
+    renderGamePlayers();
     renderActionPanel(g);
   }
 
@@ -415,6 +455,22 @@ export function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
+  function renderGamePlayers() {
+    var el = document.getElementById('game-player-list');
+    if (!el || !state.room) return;
+    el.innerHTML = '';
+    state.room.players.forEach(function(p) {
+      var li = document.createElement('li');
+      li.className = 'player-item';
+      var strategy = state.playerStrategies[p.id] || '—';
+      var isHost = p.id === state.room.hostPlayerId;
+      li.innerHTML =
+        '<span class="player-name">' + escHtml(p.name) + (isHost ? ' [HOST]' : '') + '</span>' +
+        '<span class="player-strategy mono">' + escHtml(strategy) + '</span>';
+      el.appendChild(li);
+    });
+  }
+
   function renderResult(payload) {
     var winnerId = payload.winnerId;
     var players  = payload.players || [];
@@ -472,8 +528,10 @@ export function RoomPage({ roomId }: { roomId: string }) {
     send('client:ready', {});
   });
 
-  document.getElementById('strategy-select').addEventListener('change', function(e) {
-    send('client:select_strategy', { strategyId: e.target.value });
+  document.getElementById('btn-confirm-strategy').addEventListener('click', function() {
+    if (state.selectedStrategyId) {
+      send('client:select_strategy', { strategyId: state.selectedStrategyId });
+    }
   });
 
   document.getElementById('btn-start').addEventListener('click', function() {

@@ -100,9 +100,11 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
     ...(patch.field              !== undefined && { field:              patch.field }),
     ...(patch.hands              !== undefined && { hands:              patch.hands }),
     ...(patch.usedStrategyCounts !== undefined && { usedStrategyCounts: patch.usedStrategyCounts }),
+    ...(patch.turnOrder          !== undefined && { turnOrder:          patch.turnOrder }),
     ...(patch.currentTurnIndex   !== undefined && { currentTurnIndex:   patch.currentTurnIndex }),
     ...(patch.resetCount         !== undefined && { resetCount:         patch.resetCount }),
     ...(patch.residualBugs       !== undefined && { residualBugs:       patch.residualBugs }),
+    ...(patch.eliminatedPlayers  !== undefined && { eliminatedPlayers:  patch.eliminatedPlayers }),
     ...(patch.winnerId           !== undefined && { winnerId:           patch.winnerId }),
     // raidState: null means clear the field; undefined means no change
     ...(patch.raidState !== undefined && {
@@ -319,17 +321,71 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
   gameAfterCard = applyPatch(gameAfterCard, otherPatch);
 
   // ── Immediate defeat check (after all effects) ─────────────
-  if (gameAfterCard.setNumber < 0) {
-    return applyPatch(gameAfterCard, {
-      status: "finished",
+  // Only Aggro players are eliminated for going negative; others continue.
+  if (gameAfterCard.setNumber < 0 && isAggroActive) {
+    const actorTurnIdx   = gameAfterCard.turnOrder.indexOf(actorId);
+    const newTurnOrder   = gameAfterCard.turnOrder.filter(p => p !== actorId);
+    const newEliminated  = [...gameAfterCard.eliminatedPlayers, actorId];
+    const newTurnIdx     = newTurnOrder.length > 0
+      ? actorTurnIdx % newTurnOrder.length
+      : 0;
+
+    gameAfterCard = applyPatch(gameAfterCard, {
+      turnOrder:         newTurnOrder,
+      eliminatedPlayers: newEliminated,
+      currentTurnIndex:  newTurnIdx,
       appendEvents: [{
         id:        newEventId(),
         timestamp: Date.now(),
-        type:      "game_ended",
+        type:      "player_eliminated",
         actorId:   "system",
-        payload:   { reason: "immediate_defeat", causedBy: actorId },
+        payload:   { playerId: actorId, reason: "aggro_negative" },
       }],
     });
+
+    if (newTurnOrder.length === 1) {
+      return applyPatch(gameAfterCard, {
+        status:   "finished",
+        winnerId: newTurnOrder[0],
+        appendEvents: [{
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "game_ended",
+          actorId:   "system",
+          payload:   { reason: "last_player_standing", winnerId: newTurnOrder[0] },
+        }],
+      });
+    }
+
+    // Game continues — skip draw for eliminated player, check phase transition
+    const elim_transition = checkPhaseTransition(gameAfterCard, ruleSet.phases);
+    if (elim_transition) {
+      if (isTerminalTransition(elim_transition.to)) {
+        return applyPatch(gameAfterCard, {
+          status: "finished",
+          appendEvents: [{
+            id:        newEventId(),
+            timestamp: Date.now(),
+            type:      "game_ended",
+            actorId:   "system",
+            payload:   { reason: elim_transition.conditionType, to: elim_transition.to },
+          }],
+        });
+      } else if (isPhaseTransition(elim_transition.to)) {
+        return applyPatch(gameAfterCard, {
+          phase: elim_transition.to,
+          appendEvents: [{
+            id:        newEventId(),
+            timestamp: Date.now(),
+            type:      "phase_changed",
+            actorId:   "system",
+            payload:   { from: game.phase, to: elim_transition.to, reason: elim_transition.conditionType },
+          }],
+        });
+      }
+    }
+
+    return gameAfterCard;
   }
 
   // ── 0-card: wait for reset_or_raid choice ─────────────────
