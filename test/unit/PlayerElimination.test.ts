@@ -154,6 +154,58 @@ describe("Player elimination: 3-player Aggro bust continues game", () => {
     expect(g.events.some(e => e.type === "player_eliminated")).toBe(true);
   });
 
+  it("中間プレイヤー(P2)がbustしたとき次のターンはP3になる", () => {
+    // turnOrder=[P1,P2,P3], currentTurnIndex=1 (P2's turn)
+    // P2(Aggro) busts → survivingPlayers=[P1,P3], nextTurnIdx = 1%2 = 1 → P3
+    const game = makeGame({
+      setNumber: 5,
+      hands:              { [P1]: ["4-001"], [P2]: ["3-001"], [P3]: ["2-001"] },
+      usedStrategyCounts: { [P1]: {}, [P2]: {}, [P3]: {} },
+      turnOrder:          [P1, P2, P3],
+      currentTurnIndex:   1,
+    });
+    const strategies = { [P1]: "None", [P2]: "Aggro", [P3]: "None" };
+
+    const g = applyAction(game, { type: "play_card", cardId: "3-001", operation: "sub" }, makeCtx(P2, strategies));
+
+    expect(g.status).toBe("in-progress");
+    expect(g.turnOrder).toEqual([P1, P3]);
+    expect(g.turnOrder[g.currentTurnIndex]).toBe(P3);
+  });
+
+  it("末尾プレイヤー(P3)がbustしたとき次のターンはP1(先頭)になる", () => {
+    // turnOrder=[P1,P2,P3], currentTurnIndex=2 (P3's turn)
+    // P3(Aggro) busts → survivingPlayers=[P1,P2], nextTurnIdx = 2%2 = 0 → P1
+    const game = makeGame({
+      setNumber: 5,
+      hands:              { [P1]: ["4-001"], [P2]: ["2-001"], [P3]: ["3-001"] },
+      usedStrategyCounts: { [P1]: {}, [P2]: {}, [P3]: {} },
+      turnOrder:          [P1, P2, P3],
+      currentTurnIndex:   2,
+    });
+    const strategies = { [P1]: "None", [P2]: "None", [P3]: "Aggro" };
+
+    const g = applyAction(game, { type: "play_card", cardId: "3-001", operation: "sub" }, makeCtx(P3, strategies));
+
+    expect(g.status).toBe("in-progress");
+    expect(g.turnOrder).toEqual([P1, P2]);
+    expect(g.turnOrder[g.currentTurnIndex]).toBe(P1);
+  });
+
+  it("脱落プレイヤーの手札が空になる", () => {
+    const game = makeGame({
+      setNumber: 5,
+      hands:              { [P1]: ["3-001", "4-001"], [P2]: ["2-001"], [P3]: ["1-001"] },
+      usedStrategyCounts: { [P1]: {}, [P2]: {}, [P3]: {} },
+      turnOrder:          [P1, P2, P3],
+    });
+    const strategies = { [P1]: "Aggro", [P2]: "None", [P3]: "None" };
+
+    const g = applyAction(game, { type: "play_card", cardId: "3-001", operation: "sub" }, makeCtx(P1, strategies));
+
+    expect(g.hands[P1]).toHaveLength(0);
+  });
+
   it("P1脱落後にP2が通常プレイを続けられる", () => {
     const game = makeGame({
       setNumber: 5,

@@ -188,12 +188,24 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
       payload:   { eliminatedId: actorId, reason: "set_number_negative" },
     };
 
+    // Clear the eliminated player's hand (so it won't re-enter deck on reset)
+    const handsWithoutActor = { ...gameAfterCard.hands, [actorId]: [] as typeof gameAfterCard.hands[typeof actorId] };
+
+    if (survivingPlayers.length === 0) {
+      // Degenerate case (should not happen in normal play)
+      return applyPatch(gameAfterCard, {
+        status: "finished",
+        appendEvents: [eliminatedEvent],
+      });
+    }
+
     if (survivingPlayers.length === 1) {
       // Last player standing — they win
       return applyPatch(gameAfterCard, {
         status:    "finished",
         winnerId:  survivingPlayers[0],
         turnOrder: survivingPlayers,
+        hands:     handsWithoutActor,
         appendEvents: [
           eliminatedEvent,
           {
@@ -210,12 +222,14 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
     // Multiple players survive — undo the bust and continue
     const nextTurnIdx = game.currentTurnIndex % survivingPlayers.length;
     return applyPatch(gameAfterCard, {
-      turnOrder:      survivingPlayers,
+      turnOrder:        survivingPlayers,
       currentTurnIndex: nextTurnIdx,
-      setNumber:      arith.before,
-      field:          gameAfterCard.field.slice(0, -1),
-      excludedCards:  [...gameAfterCard.excludedCards, action.cardId],
-      appendEvents:   [eliminatedEvent],
+      setNumber:        arith.before,
+      // Remove the bust card by cardId (not slice) to be safe against future field effects
+      field:            gameAfterCard.field.filter(fc => fc.cardId !== action.cardId),
+      excludedCards:    [...gameAfterCard.excludedCards, action.cardId],
+      hands:            handsWithoutActor,
+      appendEvents:     [eliminatedEvent],
     });
   }
 
