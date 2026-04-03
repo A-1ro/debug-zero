@@ -1,0 +1,54 @@
+/* BugDisplay — residual bugs panel */
+
+.container {
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
+}
+
+.label {
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.bugList {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bugChip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-panel);
+  border: 1px solid rgba(255,26,75,0.4);
+  padding: 4px 10px;
+}
+
+.bugId {
+  font-size: 10px;
+  color: var(--red);
+  letter-spacing: 0.1em;
+}
+
+.removeBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 0.15s;
+  line-height: 1;
+}
+
+.removeBtn:hover { color: var(--red); }
+
+.emptyText {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.15em;
+}

@@ -1,0 +1,63 @@
+/* HandDisplay — player hand */
+
+.container {
+  padding: 0 24px;
+}
+
+.label {
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.cardRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card {
+  width: 56px;
+  height: 78px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-title);
+  font-size: 20px;
+  color: var(--text);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.card:hover:not(.cardDisabled) {
+  transform: translateY(-6px);
+  border-color: var(--cyan-dim);
+}
+
+.cardSelected {
+  border-color: var(--cyan);
+  box-shadow: 0 0 14px rgba(0,229,255,0.35);
+  transform: translateY(-6px);
+  color: var(--cyan);
+}
+
+.cardDisabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cardId {
+  position: absolute;
+  bottom: 4px;
+  right: 5px;
+  font-size: 8px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}

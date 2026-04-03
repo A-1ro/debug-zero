@@ -1,0 +1,162 @@
+/* ============================================================
+   GameBoard — 3-column layout
+   ============================================================ */
+
+.page {
+  position: relative;
+  z-index: 2;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(6, 11, 20, 0.95);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  gap: 16px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.breadcrumbLogo {
+  font-family: var(--font-title);
+  font-size: 12px;
+  color: var(--cyan);
+  letter-spacing: 0.2em;
+}
+
+.breadcrumbSep  { color: var(--text-muted); }
+.breadcrumbSub  { color: var(--text-dim); letter-spacing: 0.1em; }
+
+.headerMeta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.wsStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2s infinite;
+}
+
+.dotOffline {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+  animation: none;
+}
+
+/* ── Main 3-column ── */
+.main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Center column ── */
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.centerScroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.handArea {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Footer ── */
+.footer {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-top: 1px solid var(--border);
+  background: rgba(6, 11, 20, 0.95);
+  flex-shrink: 0;
+}
+
+.footerText {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+}
+
+/* ── Overlay ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 11, 20, 0.85);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.overlayTitle {
+  font-family: var(--font-title);
+  font-size: 14px;
+  letter-spacing: 0.3em;
+  color: var(--cyan);
+}
+
+.overlayHint {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+}
+
+/* ── Game ended banner ── */
+.gameEndedBanner {
+  background: rgba(255, 170, 0, 0.08);
+  border: 1px solid rgba(255,170,0,0.4);
+  padding: 10px 20px;
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 0.2em;
+  text-align: center;
+  flex-shrink: 0;
+}

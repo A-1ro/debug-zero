@@ -72,7 +72,7 @@ function reducer(state: GameState, action: Action): GameState {
         ? {
             ...state.session,
             gameIds:          [...state.session.gameIds, gameId],
-            currentGameIndex: state.session.currentGameIndex + 1,
+            currentGameIndex: gameIndex,
           }
         : state.session;
       return { ...state, session, game, error: null };
@@ -84,12 +84,21 @@ function reducer(state: GameState, action: Action): GameState {
 
     case "server:action_result": {
       if (!state.game) return state;
+      const { deckCount, events, fieldCard, newSetNumber } = msg.payload;
+      // Advance turn index (wraps around turnOrder length)
+      const nextTurnIndex =
+        (state.game.currentTurnIndex + 1) % state.game.turnOrder.length;
       return {
         ...state,
         game: {
           ...state.game,
-          deckCount: msg.payload.deckCount,
-          events:    [...state.game.events, ...msg.payload.events],
+          deckCount,
+          setNumber:        newSetNumber ?? state.game.setNumber,
+          field:            fieldCard
+            ? [...state.game.field, fieldCard]
+            : state.game.field,
+          currentTurnIndex: nextTurnIndex,
+          events:           [...state.game.events, ...events],
         },
       };
     }
@@ -98,7 +107,15 @@ function reducer(state: GameState, action: Action): GameState {
       if (!state.game) return state;
       return {
         ...state,
-        game: { ...state.game, phase: msg.payload.to, raidState: msg.payload.raidState },
+        game: {
+          ...state.game,
+          phase:     msg.payload.to,
+          raidState: msg.payload.raidState,
+          // Reset field on "card_zero_played_reset" (new set starts with empty field)
+          field:     msg.payload.reason === "card_zero_played_reset"
+            ? []
+            : state.game.field,
+        },
       };
     }
 

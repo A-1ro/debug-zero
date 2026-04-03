@@ -1,0 +1,170 @@
+/* FieldDisplay — central card field */
+
+.container {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.sectionLabel {
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.setInfo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.setNumber {
+  font-family: var(--font-title);
+  font-size: 32px;
+  color: var(--cyan);
+  text-shadow: 0 0 16px rgba(0,229,255,0.5);
+  line-height: 1;
+}
+
+.setLabel {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: var(--text-dim);
+}
+
+.phaseBadge {
+  padding: 4px 12px;
+  border: 1px solid;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.phaseNormal   { color: var(--cyan);  border-color: rgba(0,229,255,0.4); }
+.phaseShowdown { color: var(--amber); border-color: rgba(255,170,0,0.4); }
+.phaseRaid     { color: var(--red);   border-color: rgba(255,26,75,0.4); }
+
+.turnLine {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+}
+
+.turnName { color: var(--green); }
+
+.cardRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 100px;
+  align-items: flex-start;
+}
+
+.emptyField {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+  margin: auto;
+  text-align: center;
+}
+
+.fieldCard {
+  width: 60px;
+  height: 84px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.fieldCardLatest {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(0,229,255,0.3);
+}
+
+.fieldCardZero {
+  border-color: var(--red);
+  box-shadow: 0 0 12px rgba(255,26,75,0.4);
+}
+
+.opSymbol {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0;
+  position: absolute;
+  top: 6px;
+  left: 7px;
+}
+
+.cardValue {
+  font-family: var(--font-title);
+  font-size: 22px;
+  color: var(--text);
+  line-height: 1;
+}
+
+.fieldCardZero .cardValue { color: var(--red); }
+.fieldCardLatest .cardValue { color: var(--cyan); }
+
+.cardOwner {
+  font-size: 8px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* Raid HP display */
+.raidSection {
+  background: var(--bg-panel);
+  border: 1px solid rgba(255,26,75,0.4);
+  padding: 16px 20px;
+}
+
+.raidTitle {
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: var(--red);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.raidHpRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.raidHpLabel { color: var(--text-dim); }
+
+.raidHpVal {
+  font-family: var(--font-title);
+  font-size: 18px;
+  color: var(--red);
+  text-shadow: 0 0 10px rgba(255,26,75,0.5);
+}
+
+.raidHpValPlayer { color: var(--cyan); }
+
+.raidBugId {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.2em;
+  margin-top: 8px;
+}
