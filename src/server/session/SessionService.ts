@@ -75,7 +75,7 @@ function buildDeck(ruleSet: RuleSet): CardId[] {
   const cards: CardId[] = [];
   for (const { value, count } of ruleSet.deck.cards) {
     for (let i = 0; i < count; i++) {
-      const serial = String(cards.filter((c) => c.startsWith(`${value}-`)).length + 1).padStart(3, "0");
+      const serial = String(i + 1).padStart(3, "0");
       cards.push(`${value}-${serial}`);
     }
   }
@@ -110,6 +110,12 @@ function determineTurnOrder(
   deck: CardId[],
   rng: () => number
 ): { turnOrder: PlayerId[]; deck: CardId[] } {
+  if (deck.length < playerIds.length) {
+    throw new Error(
+      `Deck too small for turn order draw: ${deck.length} cards, ${playerIds.length} players`
+    );
+  }
+
   // Each player draws one card from the top
   const drawn: { playerId: PlayerId; cardId: CardId; value: number }[] = [];
   const remainingDeck = [...deck];
@@ -167,11 +173,15 @@ function getInvalidatedStrategies(
 /**
  * Creates the initial Game state for a new game within a session.
  * Implements the initialization sequence from detail-design.md §5.2:
- *  1. Determine turn order (each player draws 1 card, highest wins)
- *  2. Shuffle deck & deal hands
- *  3. Calculate setNumber = gameIndex * 10
- *  4. Apply residual bugs from previous game
- *  5. Check Zero strategy validity
+ *  §5.2-1. Determine turn order (each player draws 1 card, highest wins, clockwise)
+ *  §5.2-2. Shuffle deck & deal initialHandSize cards per player
+ *  §5.2-3. Calculate setNumber = gameIndex * 10
+ *  §5.2-4. Apply residual bugs from the previous game (passed as parameter)
+ *  §5.2-5. Check Zero strategy validity (invalidate if 2+ players selected it)
+ *
+ * Note: Game is created directly as "in-progress". The "initializing" GameStatus
+ * exists in the type for future async initialization flows (e.g. waiting for player ack).
+ * Current synchronous initialization does not require the intermediate state.
  */
 function initializeGame(params: {
   sessionId: SessionId;
@@ -188,25 +198,24 @@ function initializeGame(params: {
   const playerIds = sessionPlayers.map((sp) => sp.playerId);
   const initialHandSize = ruleSet.initialConfig.initialHandSize;
 
-  // Step 1: Build and shuffle deck, determine turn order
+  // §5.2-1: Build deck, determine turn order (each player draws top card; highest goes first)
   const rawDeck = buildDeck(ruleSet);
   const shuffledDeck = shuffleDeck(rawDeck, rng);
   const { turnOrder, deck: deckAfterTurnDraw } = determineTurnOrder(playerIds, shuffledDeck, rng);
 
-  // Step 2: Deal hands (initialHandSize cards per player)
+  // §5.2-2: Deal hands (initialHandSize cards per player)
   const hands: Record<PlayerId, CardId[]> = {};
   let deckCursor = [...deckAfterTurnDraw];
   for (const playerId of playerIds) {
     hands[playerId] = deckCursor.splice(0, initialHandSize);
   }
 
-  // Step 3: setNumber = gameIndex * 10
+  // §5.2-3: setNumber = gameIndex * 10
   const setNumber = gameIndex * 10;
 
-  // Step 4: Residual bugs carried from previous game
-  // (already provided as parameter)
+  // §5.2-4: Residual bugs carried from previous game (provided as parameter)
 
-  // Step 5: Zero strategy validity events
+  // §5.2-5: Zero strategy validity events
   const invalidatedStrategies = getInvalidatedStrategies(sessionPlayers, ruleSet);
   const events: EventLog[] = [];
 
@@ -411,6 +420,7 @@ export class SessionService {
   /**
    * End the session without a specific game winner (e.g. boss wins all players).
    * Marks the session as finished with no individual winnerId.
+   * Idempotent: calling on an already-finished session overwrites winnerId but does not error.
    */
   async endSession(params: {
     sessionId: SessionId;
