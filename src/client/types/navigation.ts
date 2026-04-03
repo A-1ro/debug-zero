@@ -21,9 +21,14 @@ export interface ResultNavigateState extends RoomNavigateState {
 }
 
 export function isResultNavigateState(v: unknown): v is ResultNavigateState {
+  if (!isRoomNavigateState(v)) return false;
+  const r = v as ResultNavigateState;
   return (
-    isRoomNavigateState(v) &&
-    typeof (v as ResultNavigateState).session === "object" && (v as ResultNavigateState).session !== null &&
-    typeof (v as ResultNavigateState).room    === "object" && (v as ResultNavigateState).room    !== null
+    typeof r.session === "object" && r.session !== null &&
+    Array.isArray(r.session.players) &&
+    Array.isArray(r.session.gameIds) &&
+    typeof r.room === "object" && r.room !== null &&
+    typeof r.room.ruleSetId === "string" &&
+    Array.isArray(r.room.players)
   );
 }

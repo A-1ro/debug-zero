@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { isResultNavigateState } from "../types/navigation";
 import type { SessionPlayer, PlayerId, Room } from "../../shared/types/domain";
@@ -59,19 +60,21 @@ export function ResultView() {
   // Sort players by wins desc
   const sorted: SessionPlayer[] = [...session.players].sort((a, b) => b.wins - a.wins);
 
+  // W-1: derive winnerName from winnerPlayer to avoid split-brain between the two lookups
   const winnerPlayer = session.winnerId
-    ? session.players.find((p) => p.playerId === session.winnerId)
+    ? session.players.find((p) => p.playerId === session.winnerId) ?? null
     : null;
-  const winnerName = session.winnerId ? playerName(session.winnerId, room) : null;
+  const winnerName = winnerPlayer ? playerName(winnerPlayer.playerId, room) : null;
   const totalGames = session.gameIds.length;
 
-  function handleRematch() {
+  // W-3: stable callbacks to avoid unnecessary re-renders of button subtrees
+  const handleRematch = useCallback(() => {
     navigate(`/room/${roomId}`, { state: { playerName: myName, role } });
-  }
+  }, [navigate, roomId, myName, role]);
 
-  function handleDisband() {
+  const handleDisband = useCallback(() => {
     navigate("/");
-  }
+  }, [navigate]);
 
   return (
     <>
@@ -167,8 +170,8 @@ export function ResultView() {
                     </span>
                   </div>
 
-                  {/* Games played */}
-                  <span className={s.statVal}>{totalGames} / {totalGames}</span>
+                  {/* Games played (individual per-player data not in SessionPlayer, show session total) */}
+                  <span className={s.statVal}>{totalGames}</span>
 
                   {/* Pips */}
                   <div className={s.pipRow}>
