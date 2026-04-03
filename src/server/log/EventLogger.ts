@@ -40,11 +40,12 @@ export class EventLogger {
       payload: Record<string, unknown>;
     }>
   ): GamePatch {
-    const now = Date.now();
+    // Each event gets its own timestamp to avoid LogQuery.since() boundary issues
+    // when multiple events share the exact same millisecond.
     return {
       appendEvents: events.map((e) => ({
         id:        EventLogger.generateEventId(),
-        timestamp: now,
+        timestamp: Date.now(),
         type:      e.type,
         actorId:   e.actorId,
         payload:   e.payload,

@@ -52,6 +52,11 @@ export class ConnectionManager {
   reconnect(playerId: PlayerId, connectionId: string, ws: WSLike): void {
     const oldConnectionId = this.playerConnections.get(playerId);
     if (oldConnectionId) {
+      const oldWs = this.connections.get(oldConnectionId);
+      // Close the old WebSocket before removing it.
+      // CF Workers Hibernatable WebSocket may keep delivering messages to the old instance
+      // unless explicitly closed, causing double-receive for the same playerId.
+      oldWs?.close(4000, "reconnected");
       this.connections.delete(oldConnectionId);
     }
     this.connections.set(connectionId, ws);

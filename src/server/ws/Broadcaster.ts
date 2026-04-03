@@ -40,6 +40,11 @@ export class Broadcaster {
       case "player": {
         if (message.targetPlayerId) {
           this.sendToPlayer(message.targetPlayerId, payload);
+        } else {
+          // visibility="player" requires targetPlayerId — log and skip to avoid silent drops
+          console.warn(
+            `[Broadcaster] visibility="player" message has no targetPlayerId (type=${message.type})`
+          );
         }
         break;
       }

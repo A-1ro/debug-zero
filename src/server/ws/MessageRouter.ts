@@ -92,7 +92,12 @@ export class MessageRouter {
       return { ok: false, errorCode: "WS_UNKNOWN_MESSAGE_TYPE", detail: message.type };
     }
 
-    await handler(message, connectionId);
+    try {
+      await handler(message, connectionId);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return { ok: false, errorCode: "WS_HANDLER_ERROR", detail };
+    }
     return { ok: true };
   }
 
