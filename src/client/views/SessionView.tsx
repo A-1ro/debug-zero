@@ -27,12 +27,15 @@ export function SessionView() {
     },
   });
 
-  // Navigate to result when session ends
+  // Navigate to result when session ends — pass session + room so ResultView is self-contained
   useEffect(() => {
-    if (state.session?.status === "finished") {
-      navigate(`/room/${roomId}/result`, { replace: true, state: location.state });
+    if (state.session?.status === "finished" && state.session && state.room) {
+      navigate(`/room/${roomId}/result`, {
+        replace: true,
+        state: { ...location.state, session: state.session, room: state.room },
+      });
     }
-  }, [state.session?.status, navigate, roomId, location.state]);
+  }, [state.session?.status, state.session, state.room, navigate, roomId, location.state]);
 
   const sendAction = useCallback((action: Action) => {
     send("client:action", { action });
