@@ -152,3 +152,26 @@
   letter-spacing: 0.1em;
   text-align: center;
 }
+
+@media (max-width: 640px) {
+  .container {
+    padding: 12px 16px;
+  }
+
+  .btn {
+    padding: 14px 12px;
+    min-height: 44px; /* touch target */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .opBtn {
+    padding: 12px 0;
+    min-height: 44px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .targetBtn {
+    padding: 10px 14px;
+    min-height: 44px;
+  }
+}

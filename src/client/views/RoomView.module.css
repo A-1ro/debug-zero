@@ -571,3 +571,73 @@
   color: var(--text-muted);
   letter-spacing: 0.2em;
 }
+
+/* ── Responsive: tablet (640–1024px) ── */
+@media (max-width: 1024px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+
+  .leftCol {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 24px;
+  }
+
+  .rightCol {
+    padding: 24px;
+  }
+
+  .strategyGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── Responsive: mobile (< 640px) ── */
+@media (max-width: 640px) {
+  .header {
+    padding: 0 16px;
+    gap: 8px;
+  }
+
+  .roomIdDisplay {
+    display: none;
+  }
+
+  .leftCol {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .rightCol {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .playerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .playerSlot {
+    min-height: 80px;
+    padding: 14px;
+  }
+
+  .strategyGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .strategyCard {
+    padding: 12px 10px;
+  }
+
+  .btnLg {
+    padding: 16px 20px;
+    min-height: 44px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .footer {
+    padding: 0 16px;
+  }
+}

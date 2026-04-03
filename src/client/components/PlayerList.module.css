@@ -120,3 +120,38 @@
 }
 
 .deckCount { color: var(--cyan); font-size: 14px; }
+
+@media (max-width: 1024px) {
+  .panel {
+    width: 100%;
+    border-right: none;
+    overflow-y: visible;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .sectionLabel {
+    width: 100%;
+  }
+
+  .playerCard {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 140px;
+  }
+
+  .deckInfo {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 12px;
+  }
+
+  .playerCard {
+    flex: 1 1 100%;
+  }
+}
