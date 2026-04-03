@@ -176,8 +176,9 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
   const otherPatch = effectResolver.resolve(gameAfterCard, "on_card_played_by_other", effectCtx, playerStrategies);
   gameAfterCard = applyPatch(gameAfterCard, otherPatch);
 
-  // ── Immediate defeat: eliminate actor when setNumber < 0 ───
-  if (gameAfterCard.setNumber < 0) {
+  // ── Aggro bust: eliminate actor when Aggro causes setNumber < 0 ─
+  // Non-Aggro players going negative is allowed (game continues).
+  if (gameAfterCard.setNumber < 0 && isAggroActive) {
     const survivingPlayers = game.turnOrder.filter(pid => pid !== actorId);
     const eliminatedEvent = {
       id:        newEventId(),

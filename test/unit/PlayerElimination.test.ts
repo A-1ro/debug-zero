@@ -175,3 +175,43 @@ describe("Player elimination: 3-player Aggro bust continues game", () => {
     expect(g.status).toBe("in-progress");
   });
 });
+
+// ============================================================
+// 非Aggroが負数にしてもゲーム続行
+// ============================================================
+
+describe("Non-Aggro player going negative — game continues", () => {
+  it("非AggroプレイヤーがsetNumberを負数にしてもゲームは終了しない", () => {
+    // setNumber=2, P1(None) plays "3-001" sub → 2-3=-1 → game continues
+    const game = makeGame({
+      setNumber: 2,
+      deck:  ["9-001"],
+      hands: { [P1]: ["3-001"], [P2]: ["4-001"] },
+    });
+    const strategies = { [P1]: "None", [P2]: "None" };
+
+    const g = applyAction(game, { type: "play_card", cardId: "3-001", operation: "sub" }, makeCtx(P1, strategies));
+
+    expect(g.status).toBe("in-progress");
+    expect(g.setNumber).toBe(-1);
+    expect(g.turnOrder).toEqual([P1, P2]); // 脱落なし
+    expect(g.events.some(e => e.type === "player_eliminated")).toBe(false);
+  });
+
+  it("非Aggroが負数にした後、次のプレイヤーがプレイできる", () => {
+    const game = makeGame({
+      setNumber: 2,
+      deck:  ["9-001"],
+      hands: { [P1]: ["3-001"], [P2]: ["4-001"] },
+    });
+    const strategies = { [P1]: "None", [P2]: "None" };
+
+    let g = applyAction(game, { type: "play_card", cardId: "3-001", operation: "sub" }, makeCtx(P1, strategies));
+    expect(g.setNumber).toBe(-1);
+
+    // P2 plays "4-001" add → -1+4=3
+    g = applyAction(g, { type: "play_card", cardId: "4-001", operation: "add" }, makeCtx(P2, strategies));
+    expect(g.setNumber).toBe(3);
+    expect(g.status).toBe("in-progress");
+  });
+});
