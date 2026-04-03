@@ -4,7 +4,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { useGameState } from "../hooks/useGameState";
 import { getPlayerId } from "../hooks/useWebSocket";
 import type { RoomNavigateState } from "../types/navigation";
-import type { StrategyId } from "../../shared/types/domain";
+import type { Room, StrategyId } from "../../shared/types/domain";
 import s from "./RoomView.module.css";
 
 // ============================================================
@@ -18,15 +18,27 @@ interface StrategyDef {
 }
 
 const STRATEGIES: StrategyDef[] = [
-  { id: "Aggro",       effect: "自分のカード効果値を×2に変換する",        type: "OFFENSIVE" },
-  { id: "Control-Add", effect: "他者の加算を減算に変換する (1回/ゲーム)",  type: "CONTROL"   },
-  { id: "Control-Sub", effect: "他者の減算を加算に変換する (1回/ゲーム)",  type: "CONTROL"   },
-  { id: "Control-Div", effect: "他者の除算を乗算に変換する (1回/ゲーム)",  type: "CONTROL"   },
-  { id: "Control-Mul", effect: "他者の乗算を除算に変換する (1回/ゲーム)",  type: "CONTROL"   },
-  { id: "Hack",        effect: "場の最後のカードを自分のものにする",        type: "STEAL"     },
-  { id: "TrickStar",   effect: "場からカード1枚を除外する",                type: "REMOVAL"   },
-  { id: "Zero",        effect: "手札に0のカードを1枚追加 (3人以上選択で無効)", type: "UTILITY" },
+  { id: "Aggro",       effect: "自分のカード効果値を×2に変換する",           type: "OFFENSIVE" },
+  { id: "Control-Add", effect: "他者の加算を減算に変換する (1回/ゲーム)",    type: "CONTROL"   },
+  { id: "Control-Sub", effect: "他者の減算を加算に変換する (1回/ゲーム)",    type: "CONTROL"   },
+  { id: "Control-Div", effect: "他者の除算を乗算に変換する (1回/ゲーム)",    type: "CONTROL"   },
+  { id: "Control-Mul", effect: "他者の乗算を除算に変換する (1回/ゲーム)",    type: "CONTROL"   },
+  { id: "Hack",        effect: "場の最後のカードを自分のものにする",          type: "STEAL"     },
+  { id: "TrickStar",   effect: "場からカード1枚を除外する",                  type: "REMOVAL"   },
+  { id: "Zero",        effect: "手札に0のカードを1枚追加 (3人以上選択で無効)", type: "UTILITY"  },
 ];
+
+// ============================================================
+// Type guard for navigate state
+// ============================================================
+
+function isRoomNavigateState(v: unknown): v is RoomNavigateState {
+  return (
+    typeof v === "object" && v !== null &&
+    typeof (v as RoomNavigateState).playerName === "string" &&
+    ((v as RoomNavigateState).role === "player" || (v as RoomNavigateState).role === "spectator")
+  );
+}
 
 // ============================================================
 // Helpers
@@ -36,24 +48,36 @@ function nowHHMMSS(): string {
   return new Date().toTimeString().slice(0, 8);
 }
 
+function allStrategiesChosen(room: Room): boolean {
+  const playerMembers = room.players.filter((p) => p.role === "player");
+  if (playerMembers.length === 0) return false;
+  return playerMembers.every((p) => room.selectedStrategies?.[p.id] != null);
+}
+
 // ============================================================
 // Component
 // ============================================================
 
 export function RoomView() {
-  const { roomId = "" }  = useParams<{ roomId: string }>();
-  const navigate         = useNavigate();
-  const location         = useLocation();
-  const navState         = (location.state ?? null) as RoomNavigateState | null;
-  const playerName       = navState?.playerName ?? "";
-  const role             = navState?.role ?? "player";
-  const playerId         = getPlayerId();
+  const { roomId = "" } = useParams<{ roomId: string }>();
+  const navigate        = useNavigate();
+  const location        = useLocation();
+  const playerId        = getPlayerId();
+
+  // Type-safe extraction of navigate state
+  const navState   = isRoomNavigateState(location.state) ? location.state : null;
+  const playerName = navState?.playerName ?? "";
+  const role       = navState?.role ?? "player";
 
   const { state, applyMessage } = useGameState();
-  const [log, setLog]           = useState<string[]>([]);
+
+  // Stable ref for room — avoids stale closure in onMessage callback (C-1)
+  const roomRef = useRef<Room | null>(null);
+  useEffect(() => { roomRef.current = state.room; }, [state.room]);
+
+  const [log, setLog]                         = useState<string[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyId | null>(null);
-  const [isReady, setIsReady]   = useState(false);
-  const logBodyRef              = useRef<HTMLDivElement>(null);
+  const logBodyRef                              = useRef<HTMLDivElement>(null);
 
   const { status, send } = useWebSocket({
     roomId,
@@ -62,14 +86,12 @@ export function RoomView() {
     onMessage: (msg) => {
       applyMessage(msg);
 
-      // Build activity log from messages
       const t = nowHHMMSS();
       switch (msg.type) {
         case "server:room_updated": {
-          const r = msg.payload.room;
-          const prev = state.room;
-          if (!prev) {
-            setLog((l) => [...l, `${t} Room ${r.id} ready — waiting for players`]);
+          // Use roomRef.current (not state.room) to avoid stale closure
+          if (!roomRef.current) {
+            setLog((l) => [...l, `${t} Room ${msg.payload.room.id} ready — waiting for players`]);
           }
           break;
         }
@@ -97,22 +119,25 @@ export function RoomView() {
 
   const room    = state.room;
   const players = room?.players ?? [];
-  const isHost  = players.length > 0 && players[0].id === playerId;
-  const allReady = players.filter((p) => p.role === "player").every((p) => p.ready);
-  const readyCount  = players.filter((p) => p.role === "player" && p.ready).length;
-  const playerCount = players.filter((p) => p.role === "player").length;
 
-  const allStrategiesSelected =
-    room?.selectedStrategies != null &&
-    players.filter((p) => p.role === "player").every(
-      (p) => room.selectedStrategies?.[p.id] != null
-    );
+  // C-2: use hostPlayerId from Room type (not players[0])
+  const isHost  = room?.hostPlayerId === playerId;
+
+  const playerMembers = players.filter((p) => p.role === "player");
+  const readyCount    = playerMembers.filter((p) => p.ready).length;
+  const playerCount   = playerMembers.length;
+
+  // W-1: derive isReady from server state, not local state
+  const selfPlayer    = playerMembers.find((p) => p.id === playerId);
+  const isReady       = selfPlayer?.ready ?? false;
+
+  // W-2: guard against empty player array (every([]) is true)
+  const allStrategiesSelected = room != null && allStrategiesChosen(room);
 
   function handleReady() {
     if (isReady) return;
     send("client:ready", {});
-    setIsReady(true);
-    setLog((l) => [...l, `${nowHHMMSS()} You are ready`]);
+    setLog((l) => [...l, `${nowHHMMSS()} You marked yourself as ready`]);
   }
 
   function handleSelectStrategy(strategyId: StrategyId) {
@@ -134,25 +159,28 @@ export function RoomView() {
     navigate("/");
   }
 
-  const roomStatus = room?.status ?? "waiting";
+  const roomStatus  = room?.status ?? "waiting";
   const statusLabel =
-    roomStatus === "waiting"             ? "WAITING" :
-    roomStatus === "strategy-selection"  ? "STRATEGY SELECTION" :
-                                           "IN SESSION";
+    roomStatus === "waiting"            ? "WAITING" :
+    roomStatus === "strategy-selection" ? "STRATEGY SELECTION" :
+                                          "IN SESSION";
 
   const isConnected = status === "connected";
+
+  // Host display name
+  const hostPlayer = players.find((p) => p.id === room?.hostPlayerId);
 
   return (
     <>
       {/* Connection overlay */}
-      {status === "connecting" || status === "reconnecting" ? (
-        <div className={s.connectingOverlay}>
+      {(status === "connecting" || status === "reconnecting") && (
+        <div className={s.connectingOverlay} role="status" aria-live="polite">
           <div className={s.connectingText}>
             {status === "connecting" ? "CONNECTING..." : "RECONNECTING..."}
           </div>
           <div className={s.connectingHint}>Room: {roomId}</div>
         </div>
-      ) : null}
+      )}
 
       <div className={s.page}>
         {/* Header */}
@@ -168,7 +196,7 @@ export function RoomView() {
               <span className={s.roomIdValue}>{roomId}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {isConnected && <div className={s.dot} />}
+              {isConnected && <div className={s.dot} aria-label="connected" />}
               <span>{statusLabel}</span>
             </div>
             <button className={s.btnGhost} onClick={handleLeave} type="button">
@@ -188,7 +216,7 @@ export function RoomView() {
               </div>
               <div className={s.playerGrid}>
                 {Array.from({ length: 4 }).map((_, i) => {
-                  const player = players.filter((p) => p.role === "player")[i];
+                  const player = playerMembers[i];
                   if (!player) {
                     return (
                       <div key={i} className={`${s.playerSlot} ${s.playerSlotEmpty}`}>
@@ -196,8 +224,8 @@ export function RoomView() {
                       </div>
                     );
                   }
-                  const isSelf = player.id === playerId;
-                  const isPlayerHost = players[0]?.id === player.id;
+                  const isSelf       = player.id === playerId;
+                  const isPlayerHost = player.id === room?.hostPlayerId;
                   const strategySelected = room?.selectedStrategies?.[player.id];
                   return (
                     <div
@@ -211,10 +239,11 @@ export function RoomView() {
                       <span className={s.playerSlotNum}>P{i + 1}</span>
                       <div className={s.playerBadges}>
                         {isPlayerHost && <span className={`${s.playerBadge} ${s.badgeHost}`}>HOST</span>}
-                        {isSelf        && <span className={`${s.playerBadge} ${s.badgeYou}`}>YOU</span>}
+                        {isSelf       && <span className={`${s.playerBadge} ${s.badgeYou}`}>YOU</span>}
                         {player.ready
                           ? <span className={`${s.playerBadge} ${s.badgeReady}`}>READY</span>
-                          : <span className={`${s.playerBadge} ${s.badgeWaiting}`}>NOT READY</span>}
+                          : <span className={`${s.playerBadge} ${s.badgeWaiting}`}>NOT READY</span>
+                        }
                       </div>
                       <div className={`${s.playerName} ${isSelf ? s.playerNameSelf : ""}`}>
                         {player.name}
@@ -242,7 +271,7 @@ export function RoomView() {
               </div>
             </div>
 
-            {/* Strategy selection (visible in strategy-selection phase for players) */}
+            {/* Strategy selection: visible in strategy-selection phase for players */}
             {role === "player" && roomStatus === "strategy-selection" && (
               <div>
                 <div className={s.sectionLabel}>Strategy Selection</div>
@@ -297,10 +326,10 @@ export function RoomView() {
                 <span className={s.statusKey}>STATUS</span>
                 <span className={`${s.statusVal} ${s.statusValAmber}`}>{statusLabel}</span>
               </div>
-              {players[0] && (
+              {hostPlayer && (
                 <div className={s.statusRow}>
                   <span className={s.statusKey}>HOST</span>
-                  <span className={`${s.statusVal} ${s.statusValCyan}`}>{players[0].name}</span>
+                  <span className={`${s.statusVal} ${s.statusValCyan}`}>{hostPlayer.name}</span>
                 </div>
               )}
             </div>
@@ -326,7 +355,7 @@ export function RoomView() {
             <div className={s.controlPanel}>
               <div className={s.controlHeader}>Actions</div>
               <div className={s.controlBody}>
-                {/* Ready button: shown in waiting phase for players */}
+                {/* W-4 fix: distinct labels for ready states */}
                 {role === "player" && roomStatus === "waiting" && (
                   <button
                     type="button"
@@ -334,11 +363,10 @@ export function RoomView() {
                     onClick={handleReady}
                     disabled={isReady}
                   >
-                    {isReady ? "✓ READY" : "✓ READY"}
+                    {isReady ? "✓ READY" : "MARK AS READY"}
                   </button>
                 )}
 
-                {/* Start game: shown to host in strategy-selection phase */}
                 {isHost && roomStatus === "strategy-selection" && (
                   <button
                     type="button"
@@ -352,7 +380,7 @@ export function RoomView() {
 
                 {roomStatus === "waiting" && !isReady && role === "player" && (
                   <div style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.1em", textAlign: "center" }}>
-                    Click READY when you are prepared
+                    Click MARK AS READY when you are prepared
                   </div>
                 )}
 
