@@ -46,16 +46,18 @@ export interface Player {
   name:             string;
   role:             "player" | "spectator";
   connectionStatus: ConnectionStatus;
+  ready?:           boolean;
 }
 
 export interface Room {
-  id:           RoomId;
-  hostPlayerId: PlayerId;
-  players:      Player[];
-  maxPlayers:   number;
-  status:       RoomStatus;
-  ruleSetId:    RuleSetId;
-  sessionId?:   SessionId;
+  id:                  RoomId;
+  hostPlayerId:        PlayerId;
+  players:             Player[];
+  maxPlayers:          number;
+  status:              RoomStatus;
+  ruleSetId:           RuleSetId;
+  sessionId?:          SessionId;
+  selectedStrategies?: Record<PlayerId, StrategyId>;
 }
 
 // ============================================================

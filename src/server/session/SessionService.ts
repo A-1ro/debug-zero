@@ -444,6 +444,20 @@ export class SessionService {
     return ok(updatedSession);
   }
 
+  // ── Storage proxy methods (for DO direct access) ─────────────
+
+  async getSession(sessionId: SessionId): Promise<Session | null> {
+    return this.storage.getSession(sessionId);
+  }
+
+  async getGame(gameId: GameId): Promise<Game | null> {
+    return this.storage.getGame(gameId);
+  }
+
+  async saveGame(game: Game): Promise<void> {
+    return this.storage.saveGame(game);
+  }
+
   /**
    * Returns current standings sorted by wins descending.
    */
