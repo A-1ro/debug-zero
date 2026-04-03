@@ -190,6 +190,7 @@ export class RoomDurableObject implements DurableObject {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const att = ws.deserializeAttachment() as WsAttachment | string | null;
     const connectionId = typeof att === "string" ? att : (att?.connectionId ?? "");
+    if (!connectionId) { ws.close(4001, "missing attachment"); return; }
     const result = await this.router.route(
       typeof message === "string" ? message : new TextDecoder().decode(message),
       connectionId
@@ -206,6 +207,7 @@ export class RoomDurableObject implements DurableObject {
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
     const att = ws.deserializeAttachment() as WsAttachment | string | null;
     const connectionId = typeof att === "string" ? att : (att?.connectionId ?? "");
+    if (!connectionId) return;
     const playerId = this.connectionManager.remove(connectionId);
     if (!playerId) return;
 
@@ -731,7 +733,11 @@ export class RoomDurableObject implements DurableObject {
       if (!att) continue;
       const cid = typeof att === "string" ? att : att.connectionId;
       if (cid === connectionId) {
-        ws.serializeAttachment({ connectionId, playerId } as WsAttachment);
+        try {
+          ws.serializeAttachment({ connectionId, playerId } as WsAttachment);
+        } catch {
+          // ws may have been closed (e.g. during reconnect); safe to ignore
+        }
         break;
       }
     }
