@@ -5,6 +5,7 @@ import type {
   PlayerId,
   RuleSetId,
   SessionId,
+  StrategyId,
 } from "../../shared/types/domain";
 import {
   ROOM_NOT_FOUND,
@@ -107,8 +108,9 @@ export class RoomService {
     roomId: RoomId;
     playerId: PlayerId;
     playerName: string;
+    role?: "player" | "spectator";
   }): RoomResult<Room> {
-    const { roomId, playerId, playerName } = params;
+    const { roomId, playerId, playerName, role = "player" } = params;
 
     const room = this.repository.get(roomId);
     if (!room) {
@@ -142,7 +144,7 @@ export class RoomService {
     const newPlayer: Player = {
       id: playerId,
       name: playerName,
-      role: "player",
+      role,
       connectionStatus: "connected",
     };
 
@@ -281,6 +283,98 @@ export class RoomService {
 
     this.repository.save(updated);
     return ok(updated);
+  }
+
+  /**
+   * Mark a player as ready.
+   * When all non-spectator players are ready, transitions the room to "strategy-selection".
+   */
+  setReady(params: {
+    roomId: RoomId;
+    playerId: PlayerId;
+  }): RoomResult<Room> {
+    const { roomId, playerId } = params;
+
+    const room = this.repository.get(roomId);
+    if (!room) {
+      return fail(ROOM_NOT_FOUND, `Room ${roomId} not found`);
+    }
+
+    const updatedPlayers = room.players.map((p) =>
+      p.id === playerId ? { ...p, ready: true } : p
+    );
+
+    const allReady = updatedPlayers
+      .filter((p) => p.role === "player")
+      .every((p) => p.ready === true);
+
+    const updated: Room = {
+      ...room,
+      players: updatedPlayers,
+      status: allReady ? "strategy-selection" : room.status,
+    };
+
+    this.repository.save(updated);
+    return ok(updated);
+  }
+
+  /**
+   * Record a player's selected strategy.
+   */
+  selectStrategy(params: {
+    roomId: RoomId;
+    playerId: PlayerId;
+    strategyId: StrategyId;
+  }): RoomResult<Room> {
+    const { roomId, playerId, strategyId } = params;
+
+    const room = this.repository.get(roomId);
+    if (!room) {
+      return fail(ROOM_NOT_FOUND, `Room ${roomId} not found`);
+    }
+
+    const updated: Room = {
+      ...room,
+      selectedStrategies: {
+        ...room.selectedStrategies,
+        [playerId]: strategyId,
+      },
+    };
+
+    this.repository.save(updated);
+    return ok(updated);
+  }
+
+  /**
+   * Return all player strategies as an array ready for session creation.
+   * Returns ROOM_NOT_FOUND if the room doesn't exist.
+   * Returns SESSION_STRATEGY_NOT_SELECTED if any player has not selected a strategy.
+   */
+  getPlayerStrategies(
+    roomId: RoomId
+  ): RoomResult<Array<{ playerId: PlayerId; strategyId: StrategyId }>> {
+    const room = this.repository.get(roomId);
+    if (!room) {
+      return fail(ROOM_NOT_FOUND, `Room ${roomId} not found`);
+    }
+
+    const strategies = room.selectedStrategies ?? {};
+    const playerIds = room.players
+      .filter((p) => p.role === "player")
+      .map((p) => p.id);
+
+    for (const pid of playerIds) {
+      if (!strategies[pid]) {
+        return fail("SESSION_STRATEGY_NOT_SELECTED", `Player ${pid} has not selected a strategy`);
+      }
+    }
+
+    const result = playerIds.map((pid) => ({
+      playerId: pid,
+      strategyId: strategies[pid],
+    }));
+
+    return ok(result);
   }
 
   /** Retrieve a room by ID. */
