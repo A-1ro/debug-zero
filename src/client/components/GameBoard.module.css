@@ -160,3 +160,110 @@
   text-align: center;
   flex-shrink: 0;
 }
+
+/* ── Tab bar (hidden on desktop) ── */
+.tabBar {
+  display: none;
+}
+
+.tabBtn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  padding: 12px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px; /* touch target */
+}
+
+.tabBtnActive {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
+.tabDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 1.5s infinite;
+}
+
+/* Desktop: tab panels transparent (display:contents lets children flow normally) */
+.tabPanel {
+  display: contents;
+}
+
+.tabPanelActive {
+  display: contents;
+}
+
+/* ── Responsive: tablet + mobile (< 1024px) ── */
+@media (max-width: 1024px) {
+  .tabBar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: rgba(6, 11, 20, 0.95);
+    flex-shrink: 0;
+  }
+
+  .main {
+    position: relative;
+    overflow: visible;
+  }
+
+  /* All tab panels hidden by default */
+  .tabPanel {
+    display: none;
+    width: 100%;
+  }
+
+  /* Only active panel visible */
+  .tabPanelActive {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Center panel needs special handling since it's a flex column itself */
+  .center.tabPanel,
+  .center.tabPanelActive {
+    display: flex;
+  }
+}
+
+/* ── Responsive: mobile (< 640px) ── */
+@media (max-width: 640px) {
+  .header {
+    padding: 0 16px;
+    gap: 8px;
+  }
+
+  .breadcrumbSub {
+    display: none;
+  }
+
+  .headerMeta {
+    gap: 12px;
+    font-size: 10px;
+  }
+
+  .handArea {
+    padding: 12px 0;
+  }
+
+  .footer {
+    padding: 0 16px;
+  }
+}

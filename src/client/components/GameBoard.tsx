@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   GameView, Session, Room, PlayerId, CardId, Action,
 } from "../../shared/types/domain";
@@ -33,6 +33,9 @@ export function GameBoard({
 }: Props) {
   const [selectedCardId, setSelectedCardId] = useState<CardId | null>(null);
   const [resetOrRaidPending, setResetOrRaidPending] = useState(false);
+  const [activeTab, setActiveTab] = useState<"field" | "players" | "log">("field");
+  // Auto-switch to FIELD tab when it's my turn
+  const prevTurnRef = useRef<boolean>(false);
 
   const isMyTurn = game != null
     && game.turnOrder[game.currentTurnIndex] === playerId;
@@ -53,6 +56,14 @@ export function GameBoard({
   useEffect(() => {
     setSelectedCardId(null);
   }, [game?.currentTurnIndex, game?.phase]);
+
+  // Auto-switch to FIELD tab when it becomes my turn (mobile/tablet only)
+  useEffect(() => {
+    if (isMyTurn && !prevTurnRef.current) {
+      setActiveTab("field");
+    }
+    prevTurnRef.current = isMyTurn;
+  }, [isMyTurn]);
 
   const handleAction = useCallback((action: Action) => {
     setSelectedCardId(null);
@@ -107,18 +118,46 @@ export function GameBoard({
           </div>
         )}
 
-        {/* Main 3-column */}
+        {/* Tab bar — visible on tablet/mobile only */}
+        <div className={s.tabBar}>
+          <button
+            type="button"
+            className={`${s.tabBtn} ${activeTab === "field" ? s.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("field")}
+          >
+            FIELD
+            {isMyTurn && <span className={s.tabDot} />}
+          </button>
+          <button
+            type="button"
+            className={`${s.tabBtn} ${activeTab === "players" ? s.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("players")}
+          >
+            PLAYERS
+          </button>
+          <button
+            type="button"
+            className={`${s.tabBtn} ${activeTab === "log" ? s.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("log")}
+          >
+            LOG
+          </button>
+        </div>
+
+        {/* Main 3-column (desktop) / tab-content (tablet+mobile) */}
         <div className={s.main}>
           {/* Left — player list */}
-          <PlayerList
-            game={game}
-            session={session}
-            room={room}
-            playerId={playerId}
-          />
+          <div className={`${s.tabPanel} ${activeTab === "players" ? s.tabPanelActive : ""}`}>
+            <PlayerList
+              game={game}
+              session={session}
+              room={room}
+              playerId={playerId}
+            />
+          </div>
 
           {/* Center */}
-          <div className={s.center}>
+          <div className={`${s.center} ${s.tabPanel} ${activeTab === "field" ? s.tabPanelActive : ""}`}>
             <div className={s.centerScroll}>
               {/* Field */}
               <FieldDisplay
@@ -165,11 +204,13 @@ export function GameBoard({
           </div>
 
           {/* Right — event log */}
-          <EventLogPanel
-            events={game?.events ?? []}
-            room={room}
-            playerId={playerId}
-          />
+          <div className={`${s.tabPanel} ${activeTab === "log" ? s.tabPanelActive : ""}`}>
+            <EventLogPanel
+              events={game?.events ?? []}
+              room={room}
+              playerId={playerId}
+            />
+          </div>
         </div>
 
         {/* Footer */}

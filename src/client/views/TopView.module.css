@@ -479,3 +479,101 @@
   color: var(--text-muted);
   letter-spacing: 0.1em;
 }
+
+/* ── Responsive: tablet (640–1024px) ── */
+@media (max-width: 1024px) {
+  .page {
+    padding: 88px 24px 72px;
+  }
+
+  .header {
+    padding: 0 24px;
+  }
+
+  .heroTitle {
+    font-size: 56px;
+  }
+
+  .decoLeft,
+  .decoRight {
+    display: none;
+  }
+
+  .cardArea {
+    gap: 20px;
+  }
+}
+
+/* ── Responsive: mobile (< 640px) ── */
+@media (max-width: 640px) {
+  .page {
+    padding: 72px 16px 64px;
+  }
+
+  .header {
+    padding: 0 16px;
+  }
+
+  .statusBar {
+    display: none;
+  }
+
+  .heroTitle {
+    font-size: 40px;
+    letter-spacing: 0.12em;
+  }
+
+  .heroSubtitle {
+    font-size: 11px;
+    letter-spacing: 0.3em;
+  }
+
+  .heroDesc {
+    font-size: 12px;
+  }
+
+  .cardPreview {
+    gap: 6px;
+  }
+
+  .numCard {
+    width: 32px;
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .cardArea {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    max-width: 100%;
+  }
+
+  .infoPanel {
+    grid-template-columns: 1fr;
+    gap: 1px;
+    margin-top: 32px;
+  }
+
+  .infoItem {
+    padding: 14px 16px;
+  }
+
+  .footer {
+    padding: 0 16px;
+  }
+
+  .footerRight {
+    display: none;
+  }
+
+  .btn {
+    padding: 16px 20px;
+    min-height: 44px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .fieldInput {
+    font-size: 16px; /* prevent iOS zoom on focus */
+    padding: 14px 16px;
+  }
+}

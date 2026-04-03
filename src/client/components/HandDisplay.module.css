@@ -61,3 +61,21 @@
   font-family: var(--font-mono);
   letter-spacing: 0;
 }
+
+@media (max-width: 640px) {
+  .container {
+    padding: 0 16px;
+  }
+
+  .card {
+    width: 52px;
+    height: 72px;
+    font-size: 18px;
+    /* Larger touch target via padding trick */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .cardRow {
+    gap: 6px;
+  }
+}
