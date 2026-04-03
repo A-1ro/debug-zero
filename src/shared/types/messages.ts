@@ -139,6 +139,7 @@ export interface ActionResultPayload {
   newSetNumber?:     number;
   raidHpChanges?:    Record<PlayerId | "boss", number>;
   deckCount:         number;
+  handCounts?:       Record<PlayerId, number>;
   events:            EventLog[];
 }
 

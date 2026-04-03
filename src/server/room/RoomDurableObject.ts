@@ -505,6 +505,8 @@ export class RoomDurableObject implements DurableObject {
         effectsApplied: [],
         newSetNumber: updatedGame.setNumber,
         deckCount: updatedGame.deck.length,
+        fieldCard: payload.action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
+        handCounts,
         events: newEvents,
       },
       visibility: "all",

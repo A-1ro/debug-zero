@@ -84,7 +84,7 @@ function reducer(state: GameState, action: Action): GameState {
 
     case "server:action_result": {
       if (!state.game) return state;
-      const { deckCount, events, fieldCard, newSetNumber } = msg.payload;
+      const { deckCount, events, fieldCard, newSetNumber, handCounts } = msg.payload;
       // Advance turn index (wraps around turnOrder length)
       const nextTurnIndex =
         (state.game.currentTurnIndex + 1) % state.game.turnOrder.length;
@@ -97,6 +97,7 @@ function reducer(state: GameState, action: Action): GameState {
           field:            fieldCard
             ? [...state.game.field, fieldCard]
             : state.game.field,
+          handCounts:       handCounts ?? state.game.handCounts,
           currentTurnIndex: nextTurnIndex,
           events:           [...state.game.events, ...events],
         },
