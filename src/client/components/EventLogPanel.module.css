@@ -58,7 +58,7 @@
     width: 100%;
     border-left: none;
     border-top: 1px solid var(--border);
-    min-height: 300px;
+    flex: 1;
   }
 }
 

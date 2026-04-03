@@ -134,9 +134,9 @@ export function ResultView() {
               <span>#</span>
               <span>Player</span>
               <span>Wins</span>
-              <span>Games</span>
-              <span>Pips</span>
-              <span></span>
+              <span className={s.colHideMobile}>Games</span>
+              <span className={s.colHideMobile}>Pips</span>
+              <span className={s.colHideMobile}></span>
             </div>
 
             {sorted.map((sp, idx) => {
@@ -171,10 +171,10 @@ export function ResultView() {
                   </div>
 
                   {/* Games played (individual per-player data not in SessionPlayer, show session total) */}
-                  <span className={s.statVal}>{totalGames}</span>
+                  <span className={`${s.statVal} ${s.colHideMobile}`}>{totalGames}</span>
 
                   {/* Pips */}
-                  <div className={s.pipRow}>
+                  <div className={`${s.pipRow} ${s.colHideMobile}`}>
                     {Array.from({ length: MAX_WINS }).map((_, i) => {
                       const filled = i < sp.wins;
                       return (
@@ -191,10 +191,12 @@ export function ResultView() {
                   </div>
 
                   {/* Badge */}
-                  {isWinner
-                    ? <span className={s.badgeWinner}>▶ WINNER</span>
-                    : <span className={s.badgeEmpty}>—</span>
-                  }
+                  <span className={s.colHideMobile}>
+                    {isWinner
+                      ? <span className={s.badgeWinner}>▶ WINNER</span>
+                      : <span className={s.badgeEmpty}>—</span>
+                    }
+                  </span>
                 </div>
               );
             })}

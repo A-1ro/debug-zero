@@ -452,9 +452,8 @@
     padding: 12px 16px;
   }
 
-  /* Hide Games and badge columns (5th, 6th) */
-  .scoreboardGrid > *:nth-child(n+5),
-  .scoreboardRow > *:nth-child(n+5) {
+  /* Hide columns that don't fit on mobile */
+  .colHideMobile {
     display: none;
   }
 

@@ -215,6 +215,9 @@
     border-bottom: 1px solid var(--border);
     background: rgba(6, 11, 20, 0.95);
     flex-shrink: 0;
+    position: sticky;
+    top: 48px; /* below the page header */
+    z-index: 5;
   }
 
   .main {
@@ -236,8 +239,11 @@
     overflow: hidden;
   }
 
-  /* Center panel needs special handling since it's a flex column itself */
-  .center.tabPanel,
+  /* Center panel: hide when not active, show as flex column when active */
+  .center.tabPanel {
+    display: none;
+  }
+
   .center.tabPanelActive {
     display: flex;
   }
