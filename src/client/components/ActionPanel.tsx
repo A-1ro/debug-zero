@@ -43,6 +43,22 @@ export function ActionPanel({
   const [selectedOp, setSelectedOp] = useState<Operation>("add");
   const [selectedTarget, setSelectedTarget] = useState<PlayerId | "boss">("boss");
 
+  // mul/div availability: card value must match last field card's raw value (ArithmeticJudge rule)
+  // CardId format: "{value}-{serial}" e.g. "3-007"
+  const selectedCardValue = selectedCardId ? parseInt(selectedCardId.split("-")[0], 10) : NaN;
+  const canMulDiv = lastFieldRawValue !== undefined
+    && lastFieldRawValue !== 0
+    && !isNaN(selectedCardValue)
+    && selectedCardValue !== 0
+    && selectedCardValue === lastFieldRawValue;
+
+  // Auto-reset selectedOp to "add" when mul/div becomes unavailable
+  useEffect(() => {
+    if (!canMulDiv && (selectedOp === "mul" || selectedOp === "div")) {
+      setSelectedOp("add");
+    }
+  }, [canMulDiv, selectedOp]);
+
   // Reset target when boss/player turn switches (W-2)
   const isBossTurn = raidTurnOrder != null && raidTurnIndex != null && raidBossPlayerId != null
     ? raidTurnOrder[raidTurnIndex] === raidBossPlayerId
@@ -162,13 +178,6 @@ export function ActionPanel({
   }
 
   // Normal phase
-  // mul/div are only valid when the selected card's value equals the last field card's value
-  // CardId format: "{value}-{serial}" e.g. "3-007"
-  const selectedCardValue = selectedCardId ? parseInt(selectedCardId.split("-")[0], 10) : NaN;
-  const canMulDiv = lastFieldRawValue !== undefined
-    && !isNaN(selectedCardValue)
-    && selectedCardValue === lastFieldRawValue;
-
   const opIsDisabled = (selectedOp === "mul" || selectedOp === "div") && !canMulDiv;
   const canPlay = !!selectedCardId && !opIsDisabled;
 
