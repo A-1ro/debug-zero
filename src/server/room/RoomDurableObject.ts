@@ -506,6 +506,7 @@ export class RoomDurableObject implements DurableObject {
         newSetNumber: updatedGame.setNumber,
         deckCount: updatedGame.deck.length,
         fieldCard: payload.action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
+        fieldOverride: payload.action.type === "reset_or_raid" ? updatedGame.field : undefined,
         handCounts,
         events: newEvents,
       },
@@ -538,7 +539,7 @@ export class RoomDurableObject implements DurableObject {
         payload: {
           from: game.phase,
           to: updatedGame.phase,
-          reason: "deck_empty",
+          reason: payload.action.type === "reset_or_raid" ? "card_zero_played_raid" : "deck_empty",
           raidState: updatedGame.raidState,
         },
         visibility: "all",

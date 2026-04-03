@@ -84,19 +84,22 @@ function reducer(state: GameState, action: Action): GameState {
 
     case "server:action_result": {
       if (!state.game) return state;
-      const { deckCount, events, fieldCard, newSetNumber, handCounts } = msg.payload;
+      const { deckCount, events, fieldCard, fieldOverride, newSetNumber, handCounts } = msg.payload;
       // Advance turn index (wraps around turnOrder length)
       const nextTurnIndex =
         (state.game.currentTurnIndex + 1) % state.game.turnOrder.length;
+      const newField = fieldOverride !== undefined
+        ? fieldOverride
+        : fieldCard
+          ? [...state.game.field, fieldCard]
+          : state.game.field;
       return {
         ...state,
         game: {
           ...state.game,
           deckCount,
           setNumber:        newSetNumber ?? state.game.setNumber,
-          field:            fieldCard
-            ? [...state.game.field, fieldCard]
-            : state.game.field,
+          field:            newField,
           handCounts:       handCounts ?? state.game.handCounts,
           currentTurnIndex: nextTurnIndex,
           events:           [...state.game.events, ...events],
@@ -106,14 +109,15 @@ function reducer(state: GameState, action: Action): GameState {
 
     case "server:phase_changed": {
       if (!state.game) return state;
+      const { reason } = msg.payload;
       return {
         ...state,
         game: {
           ...state.game,
           phase:     msg.payload.to,
           raidState: msg.payload.raidState,
-          // Reset field on "card_zero_played_reset" (new set starts with empty field)
-          field:     msg.payload.reason === "card_zero_played_reset"
+          // Clear field when a new set starts (reset) or raid begins (field moves to excludedCards)
+          field:     reason === "card_zero_played_reset" || reason === "card_zero_played_raid"
             ? []
             : state.game.field,
         },
