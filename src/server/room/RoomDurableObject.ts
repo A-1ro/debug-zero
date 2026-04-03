@@ -193,8 +193,7 @@ export class RoomDurableObject implements DurableObject {
       p.id === playerId ? { ...p, connectionStatus: "disconnected" as const } : p
     );
     const updatedRoom: Room = { ...room, players: updatedPlayers };
-    this.roomRepo.save(updatedRoom);
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
 
     await this.broadcastRoomUpdated(updatedRoom);
   }
@@ -234,10 +233,12 @@ export class RoomDurableObject implements DurableObject {
     const payload = message.payload as JoinRoomPayload;
     const room = await this.loadRoom();
 
-    if (room && this.connectionManager.getWebSocketByPlayerId(message.senderId)) {
-      // Reconnection: rebind connection to the new WebSocket for this connectionId
+    if (room && room.players.some((p) => p.id === message.senderId)) {
+      // Player already in room (initial join or reconnect after DO reboot).
+      // Rebind connection using DO storage as source of truth.
+      const existingWs = this.connectionManager.getWebSocketByPlayerId(message.senderId);
       const newWs = this.connectionManager.getWebSocket(connectionId);
-      if (newWs) {
+      if (existingWs && newWs) {
         this.connectionManager.reconnect(message.senderId, connectionId, newWs);
       } else {
         this.connectionManager.bind(message.senderId, connectionId);
@@ -266,7 +267,7 @@ export class RoomDurableObject implements DurableObject {
 
     this.connectionManager.bind(message.senderId, connectionId);
     const updatedRoom = result.value;
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
   }
 
@@ -288,9 +289,10 @@ export class RoomDurableObject implements DurableObject {
     if (!updatedRoom) {
       // Room disbanded (last player left) — nothing to broadcast
       await this.state.storage.delete("room");
+      this.roomRepo.delete(room.id);
       return;
     }
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
   }
 
@@ -309,7 +311,7 @@ export class RoomDurableObject implements DurableObject {
     }
 
     const updatedRoom = result.value;
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
   }
 
@@ -330,7 +332,7 @@ export class RoomDurableObject implements DurableObject {
     }
 
     const updatedRoom = result.value;
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
   }
 
@@ -367,8 +369,7 @@ export class RoomDurableObject implements DurableObject {
 
     const { session, game } = result.value;
     const updatedRoom: Room = { ...room, status: "in-session", sessionId };
-    this.roomRepo.save(updatedRoom);
-    await this.state.storage.put("room", updatedRoom);
+    await this.saveRoom(updatedRoom);
 
     // Broadcast session_started to all
     await this.broadcast({
@@ -540,8 +541,22 @@ export class RoomDurableObject implements DurableObject {
     game: Game,
     ruleSet: ReturnType<typeof this.ruleSetRegistry.get>
   ): Promise<void> {
+    let winType: import("../../shared/types/domain").GameWinType;
+    if (game.phase === "raid") {
+      if (!game.winnerId) {
+        winType = "raid_all_players_dead";
+      } else {
+        // Determine exact vs below zero from raidState boss HP
+        const bossHp = game.raidState?.bossHP ?? -1;
+        winType = bossHp === 0 ? "raid_boss_hp_exact_zero" : "raid_boss_hp_below_zero";
+      }
+    } else if (game.phase === "showdown") {
+      winType = "showdown_closest";
+    } else {
+      winType = "set_number_zero";
+    }
     const winResult: import("../../shared/types/domain").WinResult = {
-      type: game.winnerId ? "set_number_zero" : "showdown_closest",
+      type: winType,
       winnerId: game.winnerId,
     };
 
@@ -584,6 +599,12 @@ export class RoomDurableObject implements DurableObject {
   }
 
   // ── Helpers ───────────────────────────────────────────────────
+
+  /** Persist room to both DO storage and in-memory RoomRepository (always call together). */
+  private async saveRoom(room: Room): Promise<void> {
+    this.roomRepo.save(room);
+    await this.state.storage.put("room", room);
+  }
 
   private async loadRoom(): Promise<Room | undefined> {
     const stored = await this.state.storage.get<Room>("room");
