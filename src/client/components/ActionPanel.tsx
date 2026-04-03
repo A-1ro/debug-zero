@@ -8,6 +8,7 @@ interface Props {
   isMyTurn:            boolean;
   resetOrRaidPending:  boolean;
   selectedCardId:      CardId | null;
+  lastFieldRawValue?:  number;
   room:                Room | null;
   playerId:            PlayerId;
   raidBossPlayerId?:   PlayerId;
@@ -30,6 +31,7 @@ export function ActionPanel({
   isMyTurn,
   resetOrRaidPending,
   selectedCardId,
+  lastFieldRawValue,
   room,
   playerId,
   raidBossPlayerId,
@@ -160,25 +162,38 @@ export function ActionPanel({
   }
 
   // Normal phase
-  const canPlay = !!selectedCardId;
+  // mul/div are only valid when the selected card's value equals the last field card's value
+  // CardId format: "{value}-{serial}" e.g. "3-007"
+  const selectedCardValue = selectedCardId ? parseInt(selectedCardId.split("-")[0], 10) : NaN;
+  const canMulDiv = lastFieldRawValue !== undefined
+    && !isNaN(selectedCardValue)
+    && selectedCardValue === lastFieldRawValue;
+
+  const opIsDisabled = (selectedOp === "mul" || selectedOp === "div") && !canMulDiv;
+  const canPlay = !!selectedCardId && !opIsDisabled;
 
   return (
     <div className={s.container}>
       {/* Operation selector */}
       <div className={s.opsRow}>
-        {OPS.map(({ op, symbol }) => (
-          <button
-            key={op}
-            type="button"
-            className={[
-              s.opBtn,
-              selectedOp === op ? s.opBtnSelected : "",
-            ].join(" ")}
-            onClick={() => setSelectedOp(op)}
-          >
-            {symbol}
-          </button>
-        ))}
+        {OPS.map(({ op, symbol }) => {
+          const disabled = (op === "mul" || op === "div") && !canMulDiv;
+          return (
+            <button
+              key={op}
+              type="button"
+              className={[
+                s.opBtn,
+                selectedOp === op && !disabled ? s.opBtnSelected : "",
+                disabled ? s.opBtnDisabled : "",
+              ].join(" ")}
+              disabled={disabled}
+              onClick={() => !disabled && setSelectedOp(op)}
+            >
+              {symbol}
+            </button>
+          );
+        })}
       </div>
 
       <div className={s.actionsRow}>
