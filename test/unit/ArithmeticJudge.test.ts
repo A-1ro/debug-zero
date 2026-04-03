@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { canApplyOperation, resolve } from "../../src/server/game/ArithmeticJudge";
-import type { FieldCard } from "../../src/shared/types/domain";
+import type { FieldCard, CardId } from "../../src/shared/types/domain";
 import { ACTION_INVALID_OPERATION } from "../../src/shared/constants";
 
 // ============================================================
@@ -24,30 +24,30 @@ function makeFieldCard(rawValue: number): FieldCard {
 describe("canApplyOperation", () => {
   describe("add / sub", () => {
     it("add is always valid regardless of lastFieldCard", () => {
-      expect(canApplyOperation(undefined, { id: "3-1" as any, value: 3 }, "add")).toEqual({ valid: true });
-      expect(canApplyOperation(makeFieldCard(5), { id: "3-1" as any, value: 3 }, "add")).toEqual({ valid: true });
+      expect(canApplyOperation(undefined, { id: "3-1" as CardId, value: 3 }, "add")).toEqual({ valid: true });
+      expect(canApplyOperation(makeFieldCard(5), { id: "3-1" as CardId, value: 3 }, "add")).toEqual({ valid: true });
     });
 
     it("sub is always valid regardless of lastFieldCard", () => {
-      expect(canApplyOperation(undefined, { id: "3-1" as any, value: 3 }, "sub")).toEqual({ valid: true });
-      expect(canApplyOperation(makeFieldCard(7), { id: "3-1" as any, value: 3 }, "sub")).toEqual({ valid: true });
+      expect(canApplyOperation(undefined, { id: "3-1" as CardId, value: 3 }, "sub")).toEqual({ valid: true });
+      expect(canApplyOperation(makeFieldCard(7), { id: "3-1" as CardId, value: 3 }, "sub")).toEqual({ valid: true });
     });
   });
 
   describe("mul", () => {
     it("valid when lastFieldCard.rawValue === card.value", () => {
-      const result = canApplyOperation(makeFieldCard(4), { id: "4-1" as any, value: 4 }, "mul");
+      const result = canApplyOperation(makeFieldCard(4), { id: "4-1" as CardId, value: 4 }, "mul");
       expect(result).toEqual({ valid: true });
     });
 
     it("invalid when no lastFieldCard", () => {
-      const result = canApplyOperation(undefined, { id: "4-1" as any, value: 4 }, "mul");
+      const result = canApplyOperation(undefined, { id: "4-1" as CardId, value: 4 }, "mul");
       expect(result.valid).toBe(false);
       expect(result.errorCode).toBe(ACTION_INVALID_OPERATION);
     });
 
     it("invalid when lastFieldCard.rawValue !== card.value", () => {
-      const result = canApplyOperation(makeFieldCard(3), { id: "4-1" as any, value: 4 }, "mul");
+      const result = canApplyOperation(makeFieldCard(3), { id: "4-1" as CardId, value: 4 }, "mul");
       expect(result.valid).toBe(false);
       expect(result.errorCode).toBe(ACTION_INVALID_OPERATION);
     });
@@ -55,18 +55,18 @@ describe("canApplyOperation", () => {
 
   describe("div", () => {
     it("valid when lastFieldCard.rawValue === card.value", () => {
-      const result = canApplyOperation(makeFieldCard(5), { id: "5-1" as any, value: 5 }, "div");
+      const result = canApplyOperation(makeFieldCard(5), { id: "5-1" as CardId, value: 5 }, "div");
       expect(result).toEqual({ valid: true });
     });
 
     it("invalid when no lastFieldCard", () => {
-      const result = canApplyOperation(undefined, { id: "5-1" as any, value: 5 }, "div");
+      const result = canApplyOperation(undefined, { id: "5-1" as CardId, value: 5 }, "div");
       expect(result.valid).toBe(false);
       expect(result.errorCode).toBe(ACTION_INVALID_OPERATION);
     });
 
     it("invalid when lastFieldCard.rawValue !== card.value", () => {
-      const result = canApplyOperation(makeFieldCard(2), { id: "5-1" as any, value: 5 }, "div");
+      const result = canApplyOperation(makeFieldCard(2), { id: "5-1" as CardId, value: 5 }, "div");
       expect(result.valid).toBe(false);
       expect(result.errorCode).toBe(ACTION_INVALID_OPERATION);
     });
@@ -78,7 +78,7 @@ describe("canApplyOperation", () => {
 // ============================================================
 
 describe("resolve", () => {
-  const card = { id: "3-1" as any, value: 3 };
+  const card = { id: "3-1" as CardId, value: 3 };
 
   describe("operations without aggro", () => {
     it("add: setNumber + value", () => {
@@ -123,6 +123,12 @@ describe("resolve", () => {
       expect(r.effectiveValue).toBe(6);
       expect(r.after).toBe(4);
     });
+
+    it("mul with aggro: setNumber * (value*2)", () => {
+      const r = resolve(4, card, "mul", true);
+      expect(r.effectiveValue).toBe(6);
+      expect(r.after).toBe(24); // 4 * 6 = 24
+    });
   });
 
   describe("isImmediateDefeat", () => {
@@ -141,7 +147,7 @@ describe("resolve", () => {
 
   describe("division by zero guard", () => {
     it("returns currentSetNumber when effectiveValue === 0", () => {
-      const zeroCard = { id: "0-1" as any, value: 0 };
+      const zeroCard = { id: "0-1" as CardId, value: 0 };
       const r = resolve(10, zeroCard, "div", false);
       expect(r.after).toBe(10);
     });

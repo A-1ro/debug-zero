@@ -263,6 +263,12 @@ describe("validate remove_bug", () => {
 // ============================================================
 
 describe("validate reset_or_raid", () => {
+  it("fails when not actor's turn", () => {
+    const result = validate(makeGame(), { type: "reset_or_raid", choice: "reset" }, ctx(P2));
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ACTION_NOT_YOUR_TURN);
+  });
+
   it("fails when phase is not normal", () => {
     const game = makeGame({ phase: "raid" });
     const result = validate(game, { type: "reset_or_raid", choice: "reset" }, ctx(P1));
@@ -304,4 +310,7 @@ describe("validate select_strategy", () => {
     const result = validate(makeGame(), { type: "select_strategy", strategyId: "Aggro" }, ctx(P1));
     expect(result.valid).toBe(true);
   });
+
+  // select_strategy does not check turn order by design — it is called during the
+  // pre-game strategy selection phase, before turn-based play begins.
 });
