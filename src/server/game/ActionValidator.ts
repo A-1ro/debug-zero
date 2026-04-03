@@ -200,7 +200,12 @@ function canPayRemovalCost(
 function validateResetOrRaid(
   game: Game,
   action: ResetOrRaidAction,
+  ctx: ValidateContext,
 ): ValidationResult {
+  if (!isCurrentTurnPlayer(game, ctx.actorId)) {
+    return fail(ACTION_NOT_YOUR_TURN);
+  }
+
   if (game.phase !== "normal") {
     return fail(ACTION_INVALID_PHASE, "reset_or_raid is only available in normal phase");
   }
@@ -251,7 +256,7 @@ export function validate(
     case "remove_bug":
       return validateRemoveBug(game, action, ctx);
     case "reset_or_raid":
-      return validateResetOrRaid(game, action);
+      return validateResetOrRaid(game, action, ctx);
     case "select_strategy":
       return validateSelectStrategy(action, ctx);
   }
