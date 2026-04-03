@@ -16,7 +16,6 @@ import type {
 import type { RuleSet } from "../../shared/types/rules";
 import {
   SESSION_INVALID_STRATEGY,
-  SESSION_STRATEGY_NOT_SELECTED,
   SESSION_NOT_IN_PROGRESS,
 } from "../../shared/constants";
 
@@ -300,7 +299,7 @@ export class SessionService {
       ruleSetId,
       players: sessionPlayers,
       gameIds: [],
-      currentGameIndex: 1,
+      currentGameIndex: 0,
       status: "in-progress" as SessionStatus,
       winnerId: undefined,
     };
@@ -342,7 +341,10 @@ export class SessionService {
       return fail(SESSION_NOT_IN_PROGRESS, "Session is already finished");
     }
 
-    const nextGameIndex = session.currentGameIndex + 1;
+    // game.gameIndex is 1-based; currentGameIndex is 0-based.
+    // After the session starts with game #1, gameIds.length = 1, so next game is #2.
+    const nextGameIndex = session.gameIds.length + 1; // 1-based game number
+    const nextCurrentIndex = session.currentGameIndex + 1; // 0-based session tracker
     const residualBugs = finishedGame.residualBugs ?? [];
 
     const game = initializeGame({
@@ -357,7 +359,7 @@ export class SessionService {
     const updatedSession: Session = {
       ...session,
       gameIds: [...session.gameIds, game.id],
-      currentGameIndex: nextGameIndex,
+      currentGameIndex: nextCurrentIndex,
     };
 
     await this.storage.saveSession(updatedSession);
