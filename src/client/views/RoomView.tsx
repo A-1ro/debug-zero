@@ -4,6 +4,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { useGameState } from "../hooks/useGameState";
 import { getPlayerId } from "../hooks/useWebSocket";
 import type { RoomNavigateState } from "../types/navigation";
+import { isRoomNavigateState } from "../types/navigation";
 import type { Room, StrategyId } from "../../shared/types/domain";
 import s from "./RoomView.module.css";
 
@@ -27,18 +28,6 @@ const STRATEGIES: StrategyDef[] = [
   { id: "TrickStar",   effect: "場からカード1枚を除外する",                  type: "REMOVAL"   },
   { id: "Zero",        effect: "手札に0のカードを1枚追加 (3人以上選択で無効)", type: "UTILITY"  },
 ];
-
-// ============================================================
-// Type guard for navigate state
-// ============================================================
-
-function isRoomNavigateState(v: unknown): v is RoomNavigateState {
-  return (
-    typeof v === "object" && v !== null &&
-    typeof (v as RoomNavigateState).playerName === "string" &&
-    ((v as RoomNavigateState).role === "player" || (v as RoomNavigateState).role === "spectator")
-  );
-}
 
 // ============================================================
 // Helpers
