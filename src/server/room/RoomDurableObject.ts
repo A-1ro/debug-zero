@@ -503,6 +503,7 @@ export class RoomDurableObject implements DurableObject {
         action: payload.action,
         actorId: message.senderId,
         effectsApplied: [],
+        newSetNumber: updatedGame.setNumber,
         deckCount: updatedGame.deck.length,
         events: newEvents,
       },

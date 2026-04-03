@@ -192,6 +192,7 @@ export function GameBoard({
                   isMyTurn={isMyTurn}
                   resetOrRaidPending={resetOrRaidPending}
                   selectedCardId={selectedCardId}
+                  lastFieldRawValue={game.field.at(-1)?.rawValue}
                   room={room}
                   playerId={playerId}
                   raidBossPlayerId={game.raidState?.bossPlayerId}

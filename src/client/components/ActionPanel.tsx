@@ -8,6 +8,7 @@ interface Props {
   isMyTurn:            boolean;
   resetOrRaidPending:  boolean;
   selectedCardId:      CardId | null;
+  lastFieldRawValue?:  number;
   room:                Room | null;
   playerId:            PlayerId;
   raidBossPlayerId?:   PlayerId;
@@ -30,6 +31,7 @@ export function ActionPanel({
   isMyTurn,
   resetOrRaidPending,
   selectedCardId,
+  lastFieldRawValue,
   room,
   playerId,
   raidBossPlayerId,
@@ -40,6 +42,22 @@ export function ActionPanel({
 }: Props) {
   const [selectedOp, setSelectedOp] = useState<Operation>("add");
   const [selectedTarget, setSelectedTarget] = useState<PlayerId | "boss">("boss");
+
+  // mul/div availability: card value must match last field card's raw value (ArithmeticJudge rule)
+  // CardId format: "{value}-{serial}" e.g. "3-007"
+  const selectedCardValue = selectedCardId ? parseInt(selectedCardId.split("-")[0], 10) : NaN;
+  const canMulDiv = lastFieldRawValue !== undefined
+    && lastFieldRawValue !== 0
+    && !isNaN(selectedCardValue)
+    && selectedCardValue !== 0
+    && selectedCardValue === lastFieldRawValue;
+
+  // Auto-reset selectedOp to "add" when mul/div becomes unavailable
+  useEffect(() => {
+    if (!canMulDiv && (selectedOp === "mul" || selectedOp === "div")) {
+      setSelectedOp("add");
+    }
+  }, [canMulDiv, selectedOp]);
 
   // Reset target when boss/player turn switches (W-2)
   const isBossTurn = raidTurnOrder != null && raidTurnIndex != null && raidBossPlayerId != null
@@ -160,25 +178,31 @@ export function ActionPanel({
   }
 
   // Normal phase
-  const canPlay = !!selectedCardId;
+  const opIsDisabled = (selectedOp === "mul" || selectedOp === "div") && !canMulDiv;
+  const canPlay = !!selectedCardId && !opIsDisabled;
 
   return (
     <div className={s.container}>
       {/* Operation selector */}
       <div className={s.opsRow}>
-        {OPS.map(({ op, symbol }) => (
-          <button
-            key={op}
-            type="button"
-            className={[
-              s.opBtn,
-              selectedOp === op ? s.opBtnSelected : "",
-            ].join(" ")}
-            onClick={() => setSelectedOp(op)}
-          >
-            {symbol}
-          </button>
-        ))}
+        {OPS.map(({ op, symbol }) => {
+          const disabled = (op === "mul" || op === "div") && !canMulDiv;
+          return (
+            <button
+              key={op}
+              type="button"
+              className={[
+                s.opBtn,
+                selectedOp === op && !disabled ? s.opBtnSelected : "",
+                disabled ? s.opBtnDisabled : "",
+              ].join(" ")}
+              disabled={disabled}
+              onClick={() => !disabled && setSelectedOp(op)}
+            >
+              {symbol}
+            </button>
+          );
+        })}
       </div>
 
       <div className={s.actionsRow}>
