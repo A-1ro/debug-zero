@@ -178,9 +178,11 @@ export interface SessionEndedPayload {
 }
 
 export interface StateSyncPayload {
-  room:    Room;
-  session: Session;
-  game:    GameView;
+  room:     Room;
+  /** null when reconnecting before any session has started (waiting phase) */
+  session:  Session  | null;
+  /** null when reconnecting before any session has started (waiting phase) */
+  game:     GameView | null;
 }
 
 export interface ErrorPayload {
@@ -204,15 +206,26 @@ export type ServerPayload =
   | ErrorPayload;
 
 // ============================================================
-// Server message
+// Server message — discriminated union so `type` narrows `payload`
 // ============================================================
 
-export interface ServerMessage {
+interface ServerMessageBase {
   id:              MessageId;
-  type:            ServerMessageType;
   roomId:          RoomId;
   gameId?:         GameId;
-  payload:         ServerPayload;
   visibility:      "all" | "player" | "spectator";
   targetPlayerId?: PlayerId;
 }
+
+export type ServerMessage =
+  | (ServerMessageBase & { type: "server:room_updated";      payload: RoomUpdatedPayload      })
+  | (ServerMessageBase & { type: "server:session_started";   payload: SessionStartedPayload   })
+  | (ServerMessageBase & { type: "server:game_started";      payload: GameStartedPayload      })
+  | (ServerMessageBase & { type: "server:action_result";     payload: ActionResultPayload     })
+  | (ServerMessageBase & { type: "server:hand_updated";      payload: HandUpdatedPayload      })
+  | (ServerMessageBase & { type: "server:phase_changed";     payload: PhaseChangedPayload     })
+  | (ServerMessageBase & { type: "server:raid_round_started"; payload: RaidRoundStartedPayload })
+  | (ServerMessageBase & { type: "server:game_ended";        payload: GameEndedPayload        })
+  | (ServerMessageBase & { type: "server:session_ended";     payload: SessionEndedPayload     })
+  | (ServerMessageBase & { type: "server:state_sync";        payload: StateSyncPayload        })
+  | (ServerMessageBase & { type: "server:error";             payload: ErrorPayload            });

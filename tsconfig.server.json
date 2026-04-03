@@ -2,8 +2,6 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx",
     "types": ["vite/client", "node"]
   },
   "include": [

@@ -7,8 +7,8 @@ import type { ServerMessage } from "../../shared/types/messages";
 // ============================================================
 
 export interface GameState {
-  room:    Room    | null;
-  session: Session | null;
+  room:    Room     | null;
+  session: Session  | null;
   game:    GameView | null;
   error:   { code: string; message: string; recoverable: boolean } | null;
 }
@@ -31,19 +31,18 @@ function reducer(state: GameState, action: Action): GameState {
 
   const msg = action.payload;
 
+  // ServerMessage is a discriminated union — type narrows payload without casts
   switch (msg.type) {
-    case "server:room_updated": {
-      const p = msg.payload as { room: Room };
-      return { ...state, room: p.room, error: null };
-    }
+    case "server:room_updated":
+      return { ...state, room: msg.payload.room, error: null };
 
     case "server:session_started": {
-      const p = msg.payload as { sessionId: string; players: Session["players"]; ruleSetId: string };
+      const { sessionId, players, ruleSetId } = msg.payload;
       const session: Session = {
-        id:               p.sessionId,
+        id:               sessionId,
         roomId:           state.room?.id ?? "",
-        ruleSetId:        p.ruleSetId,
-        players:          p.players,
+        ruleSetId,
+        players,
         gameIds:          [],
         currentGameIndex: 0,
         status:           "in-progress",
@@ -52,88 +51,98 @@ function reducer(state: GameState, action: Action): GameState {
     }
 
     case "server:game_started": {
-      const p = msg.payload as {
-        gameId: string; gameIndex: number; setNumber: number;
-        turnOrder: string[]; deckCount: number; residualBugs: string[];
-        hand: string[]; handCounts: Record<string, number>;
-      };
+      const { gameId, gameIndex, setNumber, turnOrder, deckCount, residualBugs, hand, handCounts } = msg.payload;
       const game: GameView = {
-        id:               p.gameId,
-        gameIndex:        p.gameIndex,
-        setNumber:        p.setNumber,
+        id:               gameId,
+        gameIndex,
+        setNumber,
         phase:            "normal",
         status:           "in-progress",
-        deckCount:        p.deckCount,
+        deckCount,
         field:            [],
-        hand:             p.hand,
-        handCounts:       p.handCounts,
-        turnOrder:        p.turnOrder,
+        hand,
+        handCounts,
+        turnOrder,
         currentTurnIndex: 0,
         resetCount:       0,
-        residualBugs:     p.residualBugs,
+        residualBugs,
         events:           [],
       };
       const session = state.session
-        ? { ...state.session, gameIds: [...state.session.gameIds, p.gameId], currentGameIndex: state.session.currentGameIndex + 1 }
+        ? {
+            ...state.session,
+            gameIds:          [...state.session.gameIds, gameId],
+            currentGameIndex: state.session.currentGameIndex + 1,
+          }
         : state.session;
       return { ...state, session, game, error: null };
     }
 
-    case "server:hand_updated": {
-      const p = msg.payload as { hand: string[] };
+    case "server:hand_updated":
       if (!state.game) return state;
-      return { ...state, game: { ...state.game, hand: p.hand } };
-    }
+      return { ...state, game: { ...state.game, hand: msg.payload.hand } };
 
     case "server:action_result": {
-      const p = msg.payload as { deckCount: number; events: GameView["events"] };
       if (!state.game) return state;
       return {
         ...state,
         game: {
           ...state.game,
-          deckCount: p.deckCount,
-          events: [...state.game.events, ...p.events],
+          deckCount: msg.payload.deckCount,
+          events:    [...state.game.events, ...msg.payload.events],
         },
       };
     }
 
     case "server:phase_changed": {
-      const p = msg.payload as { from: string; to: GameView["phase"]; raidState?: GameView["raidState"] };
       if (!state.game) return state;
       return {
         ...state,
-        game: { ...state.game, phase: p.to, raidState: p.raidState },
+        game: { ...state.game, phase: msg.payload.to, raidState: msg.payload.raidState },
       };
     }
 
     case "server:game_ended": {
-      const p = msg.payload as { sessionPlayers: Session["players"] };
-      const session = state.session ? { ...state.session, players: p.sessionPlayers } : state.session;
+      const session = state.session
+        ? { ...state.session, players: msg.payload.sessionPlayers }
+        : state.session;
       const game = state.game ? { ...state.game, status: "finished" as const } : state.game;
       return { ...state, session, game, error: null };
     }
 
     case "server:session_ended": {
-      const p = msg.payload as { sessionId: string; winnerId: string; players: Session["players"] };
       const session = state.session
-        ? { ...state.session, status: "finished" as const, winnerId: p.winnerId, players: p.players }
+        ? {
+            ...state.session,
+            status:   "finished" as const,
+            winnerId: msg.payload.winnerId,
+            players:  msg.payload.players,
+          }
         : state.session;
       return { ...state, session, error: null };
     }
 
-    case "server:state_sync": {
-      // Full state overwrite on reconnect
-      const p = msg.payload as { room: Room; session: Session; game: GameView };
-      return { room: p.room, session: p.session, game: p.game, error: null };
-    }
+    case "server:state_sync":
+      // Full state overwrite on reconnect (session/game may be null in waiting phase)
+      return {
+        room:    msg.payload.room,
+        session: msg.payload.session,
+        game:    msg.payload.game,
+        error:   null,
+      };
 
-    case "server:error": {
-      const p = msg.payload as { code: string; message: string; recoverable: boolean };
-      return { ...state, error: { code: p.code, message: p.message, recoverable: p.recoverable } };
-    }
+    case "server:error":
+      return {
+        ...state,
+        error: {
+          code:        msg.payload.code,
+          message:     msg.payload.message,
+          recoverable: msg.payload.recoverable,
+        },
+      };
 
-    default:
+    case "server:raid_round_started":
+      // Phase display only — no state update needed at this layer
       return state;
   }
 }

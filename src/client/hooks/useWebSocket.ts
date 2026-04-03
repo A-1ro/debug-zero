@@ -64,9 +64,13 @@ export function useWebSocket(params: UseWebSocketParams) {
   const activeRef  = useRef(true);   // false when component unmounts
   const timerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Stable ref to the latest onMessage callback — avoids stale closure issues
-  const onMessageRef = useRef(onMessage);
-  useEffect(() => { onMessageRef.current = onMessage; }, [onMessage]);
+  // Stable refs for values that must not re-trigger connect on change
+  const onMessageRef   = useRef(onMessage);
+  const playerNameRef  = useRef(playerName);
+  const roleRef        = useRef(role);
+  useEffect(() => { onMessageRef.current  = onMessage;   }, [onMessage]);
+  useEffect(() => { playerNameRef.current = playerName;  }, [playerName]);
+  useEffect(() => { roleRef.current       = role;        }, [role]);
 
   const connect = useCallback(() => {
     if (!activeRef.current) return;
@@ -84,10 +88,10 @@ export function useWebSocket(params: UseWebSocketParams) {
       attemptRef.current = 0;
       setStatus("connected");
 
-      // Send join_room immediately on connect
+      // Send join_room immediately on connect — read latest values from refs
       sendRaw(ws, "client:join_room", {
-        playerName,
-        role,
+        playerName: playerNameRef.current,
+        role:       roleRef.current,
       }, roomId);
     };
 
@@ -113,7 +117,7 @@ export function useWebSocket(params: UseWebSocketParams) {
     ws.onerror = () => {
       // onclose fires after onerror — no extra handling needed
     };
-  }, [roomId, playerName, role]);
+  }, [roomId]); // playerName/role are read via refs — not deps to avoid reconnect on value change
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {
