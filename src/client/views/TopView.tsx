@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import type { RoomNavigateState } from "../types/navigation";
 import s from "./TopView.module.css";
 
 export function TopView() {
@@ -9,11 +10,11 @@ export function TopView() {
   const [createName, setCreateName]   = useState("");
   const [createError, setCreateError] = useState("");
 
-  // Join Room state
+  // Join Room state — errors keyed by field to avoid string-comparison coupling
   const [joinName,   setJoinName]   = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
   const [joinRole,   setJoinRole]   = useState<"player" | "spectator">("player");
-  const [joinError,  setJoinError]  = useState("");
+  const [joinErrors, setJoinErrors] = useState<{ name?: string; roomId?: string }>({});
 
   function handleCreate() {
     if (!createName.trim()) {
@@ -21,23 +22,20 @@ export function TopView() {
       return;
     }
     const roomId = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
-    navigate(`/room/${roomId}`, {
-      state: { playerName: createName.trim(), role: "player" as const },
-    });
+    const state: RoomNavigateState = { playerName: createName.trim(), role: "player" };
+    navigate(`/room/${roomId}`, { state });
   }
 
   function handleJoin() {
-    if (!joinName.trim()) {
-      setJoinError("PLAYER NAME REQUIRED");
+    const errors: { name?: string; roomId?: string } = {};
+    if (!joinName.trim())   errors.name   = "PLAYER NAME REQUIRED";
+    if (!joinRoomId.trim()) errors.roomId = "ROOM ID REQUIRED";
+    if (Object.keys(errors).length > 0) {
+      setJoinErrors(errors);
       return;
     }
-    if (!joinRoomId.trim()) {
-      setJoinError("ROOM ID REQUIRED");
-      return;
-    }
-    navigate(`/room/${joinRoomId.trim().toUpperCase()}`, {
-      state: { playerName: joinName.trim(), role: joinRole },
-    });
+    const state: RoomNavigateState = { playerName: joinName.trim(), role: joinRole };
+    navigate(`/room/${joinRoomId.trim().toUpperCase()}`, { state });
   }
 
   return (
@@ -93,8 +91,9 @@ export function TopView() {
             </div>
             <div className={s.panelBody}>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Player Name</label>
+                <label htmlFor="create-player-name" className={s.fieldLabel}>Player Name</label>
                 <input
+                  id="create-player-name"
                   className={`${s.fieldInput}${createError ? ` ${s.fieldInputError}` : ""}`}
                   type="text"
                   placeholder="ENTER YOUR NAME"
@@ -103,28 +102,16 @@ export function TopView() {
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                   maxLength={20}
                 />
+                {createError && <span className={s.fieldError}>{createError}</span>}
               </div>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Max Players</label>
-                <input
-                  className={s.fieldInput}
-                  type="number"
-                  defaultValue={4}
-                  min={2}
-                  max={4}
-                  readOnly
-                />
+                <span className={s.fieldLabel}>Max Players</span>
+                <div className={s.fieldReadonly}>4</div>
               </div>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Rule Set</label>
-                <input
-                  className={s.fieldInput}
-                  type="text"
-                  value="BASIC"
-                  readOnly
-                />
+                <span className={s.fieldLabel}>Rule Set</span>
+                <div className={s.fieldReadonlyCyan}>BASIC</div>
               </div>
-              {createError && <span className={s.fieldError}>{createError}</span>}
               <div className={s.divider} />
               <button className={`${s.btn} ${s.btnPrimary}`} onClick={handleCreate}>
                 ▶ CREATE ROOM
@@ -142,32 +129,36 @@ export function TopView() {
             </div>
             <div className={s.panelBody}>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Player Name</label>
+                <label htmlFor="join-player-name" className={s.fieldLabel}>Player Name</label>
                 <input
-                  className={`${s.fieldInput}${joinError === "PLAYER NAME REQUIRED" ? ` ${s.fieldInputError}` : ""}`}
+                  id="join-player-name"
+                  className={`${s.fieldInput}${joinErrors.name ? ` ${s.fieldInputError}` : ""}`}
                   type="text"
                   placeholder="ENTER YOUR NAME"
                   value={joinName}
-                  onChange={(e) => { setJoinName(e.target.value); setJoinError(""); }}
+                  onChange={(e) => { setJoinName(e.target.value); setJoinErrors((p) => ({ ...p, name: undefined })); }}
                   onKeyDown={(e) => e.key === "Enter" && handleJoin()}
                   maxLength={20}
                 />
+                {joinErrors.name && <span className={s.fieldError}>{joinErrors.name}</span>}
               </div>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Room ID</label>
+                <label htmlFor="join-room-id" className={s.fieldLabel}>Room ID</label>
                 <input
-                  className={`${s.fieldInput}${joinError === "ROOM ID REQUIRED" ? ` ${s.fieldInputError}` : ""}`}
+                  id="join-room-id"
+                  className={`${s.fieldInput}${joinErrors.roomId ? ` ${s.fieldInputError}` : ""}`}
                   type="text"
                   placeholder="e.g. ABC12345"
                   value={joinRoomId}
-                  onChange={(e) => { setJoinRoomId(e.target.value); setJoinError(""); }}
+                  onChange={(e) => { setJoinRoomId(e.target.value); setJoinErrors((p) => ({ ...p, roomId: undefined })); }}
                   onKeyDown={(e) => e.key === "Enter" && handleJoin()}
                   maxLength={8}
                   style={{ letterSpacing: "0.3em", textTransform: "uppercase" }}
                 />
+                {joinErrors.roomId && <span className={s.fieldError}>{joinErrors.roomId}</span>}
               </div>
               <div className={s.fieldGroup}>
-                <label className={s.fieldLabel}>Join as</label>
+                <span className={s.fieldLabel}>Join as</span>
                 <div className={s.roleSelector}>
                   <button
                     className={`${s.roleOption}${joinRole === "player" ? ` ${s.roleOptionActive}` : ""}`}
@@ -185,7 +176,6 @@ export function TopView() {
                   </button>
                 </div>
               </div>
-              {joinError && <span className={s.fieldError}>{joinError}</span>}
               <div className={s.divider} />
               <button className={`${s.btn} ${s.btnSecondary}`} onClick={handleJoin}>
                 ◈ JOIN ROOM
