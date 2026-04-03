@@ -37,14 +37,17 @@ export function GameBoard({
   const isMyTurn = game != null
     && game.turnOrder[game.currentTurnIndex] === playerId;
 
-  // Detect 0-value card played to trigger ResetOrRaid UI
+  // Detect 0-value card played by ME to trigger ResetOrRaid UI.
+  // Only check field.length changes — not isMyTurn — to avoid re-triggering
+  // when the turn rotates to us after someone else played a 0.
   useEffect(() => {
     if (!game || game.field.length === 0) return;
     const lastCard = game.field[game.field.length - 1];
-    if (lastCard.rawValue === 0 && isMyTurn) {
+    if (lastCard.rawValue === 0 && lastCard.playerId === playerId) {
       setResetOrRaidPending(true);
     }
-  }, [game?.field.length, isMyTurn]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.field.length]);
 
   // Clear selection when turn changes or game phase changes
   useEffect(() => {
@@ -151,6 +154,7 @@ export function GameBoard({
                   selectedCardId={selectedCardId}
                   room={room}
                   playerId={playerId}
+                  raidBossPlayerId={game.raidState?.bossPlayerId}
                   raidTurnOrder={game.raidState?.turnOrder}
                   raidTurnIndex={game.raidState?.currentTurnIndex}
                   onAction={handleAction}

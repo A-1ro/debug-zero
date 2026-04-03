@@ -13,12 +13,12 @@ export function HandDisplay({ hand, selectedCardId, isMyTurn, onSelect }: Props)
     <div className={s.container}>
       <div className={s.label}>Your Hand ({hand.length})</div>
       <div className={s.cardRow}>
-        {hand.map((cardId) => {
+        {hand.map((cardId, i) => {
           const value    = parseInt(cardId.split("-")[0], 10);
           const isSelected = cardId === selectedCardId;
           return (
             <div
-              key={cardId}
+              key={`${cardId}-${i}`}
               role="button"
               tabIndex={isMyTurn ? 0 : -1}
               aria-pressed={isSelected}

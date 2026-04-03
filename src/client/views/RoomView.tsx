@@ -102,7 +102,7 @@ export function RoomView() {
   // Navigate to game when game starts
   useEffect(() => {
     if (state.game) {
-      navigate(`/room/${roomId}/game`, { replace: true });
+      navigate(`/room/${roomId}/game`, { replace: true, state: location.state });
     }
   }, [state.game, navigate, roomId]);
 

@@ -24,7 +24,8 @@ export function EventLogPanel({ events, room, playerId }: Props) {
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [events]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events.length]);
 
   return (
     <div className={s.panel}>

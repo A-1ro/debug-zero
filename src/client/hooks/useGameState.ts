@@ -72,7 +72,7 @@ function reducer(state: GameState, action: Action): GameState {
         ? {
             ...state.session,
             gameIds:          [...state.session.gameIds, gameId],
-            currentGameIndex: state.session.currentGameIndex + 1,
+            currentGameIndex: gameIndex,
           }
         : state.session;
       return { ...state, session, game, error: null };

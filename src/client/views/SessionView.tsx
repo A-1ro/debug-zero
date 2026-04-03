@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useCallback } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useWebSocket, getPlayerId } from "../hooks/useWebSocket";
 import { useGameState } from "../hooks/useGameState";
@@ -18,10 +18,6 @@ export function SessionView() {
 
   const { state, applyMessage } = useGameState();
 
-  // Stable ref so the onMessage callback always sees the latest state
-  const stateRef = useRef(state);
-  useEffect(() => { stateRef.current = state; }, [state]);
-
   const { status, send } = useWebSocket({
     roomId,
     playerName,
@@ -38,13 +34,13 @@ export function SessionView() {
     }
   }, [state.session?.status, navigate, roomId, location.state]);
 
-  function sendAction(action: Action) {
+  const sendAction = useCallback((action: Action) => {
     send("client:action", { action });
-  }
+  }, [send]);
 
-  function sendResetOrRaid(choice: "reset" | "raid") {
+  const sendResetOrRaid = useCallback((choice: "reset" | "raid") => {
     send("client:reset_or_raid", { choice });
-  }
+  }, [send]);
 
   return (
     <GameBoard
