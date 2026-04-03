@@ -100,6 +100,7 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
     ...(patch.field              !== undefined && { field:              patch.field }),
     ...(patch.hands              !== undefined && { hands:              patch.hands }),
     ...(patch.usedStrategyCounts !== undefined && { usedStrategyCounts: patch.usedStrategyCounts }),
+    ...(patch.turnOrder          !== undefined && { turnOrder:          patch.turnOrder }),
     ...(patch.currentTurnIndex   !== undefined && { currentTurnIndex:   patch.currentTurnIndex }),
     ...(patch.resetCount         !== undefined && { resetCount:         patch.resetCount }),
     ...(patch.residualBugs       !== undefined && { residualBugs:       patch.residualBugs }),
@@ -175,17 +176,60 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
   const otherPatch = effectResolver.resolve(gameAfterCard, "on_card_played_by_other", effectCtx, playerStrategies);
   gameAfterCard = applyPatch(gameAfterCard, otherPatch);
 
-  // ── Immediate defeat check (after all effects) ─────────────
-  if (gameAfterCard.setNumber < 0) {
+  // ── Aggro bust: eliminate actor when Aggro causes setNumber < 0 ─
+  // Non-Aggro players going negative is allowed (game continues).
+  if (gameAfterCard.setNumber < 0 && isAggroActive) {
+    const survivingPlayers = game.turnOrder.filter(pid => pid !== actorId);
+    const eliminatedEvent = {
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "player_eliminated" as const,
+      actorId:   "system" as const,
+      payload:   { eliminatedId: actorId, reason: "set_number_negative" },
+    };
+
+    // Clear the eliminated player's hand (so it won't re-enter deck on reset)
+    const handsWithoutActor = { ...gameAfterCard.hands, [actorId]: [] as typeof gameAfterCard.hands[typeof actorId] };
+
+    if (survivingPlayers.length === 0) {
+      // Degenerate case (should not happen in normal play)
+      return applyPatch(gameAfterCard, {
+        status: "finished",
+        appendEvents: [eliminatedEvent],
+      });
+    }
+
+    if (survivingPlayers.length === 1) {
+      // Last player standing — they win
+      return applyPatch(gameAfterCard, {
+        status:    "finished",
+        winnerId:  survivingPlayers[0],
+        turnOrder: survivingPlayers,
+        hands:     handsWithoutActor,
+        appendEvents: [
+          eliminatedEvent,
+          {
+            id:        newEventId(),
+            timestamp: Date.now(),
+            type:      "game_ended",
+            actorId:   "system",
+            payload:   { reason: "last_player_standing", winnerId: survivingPlayers[0] },
+          },
+        ],
+      });
+    }
+
+    // Multiple players survive — undo the bust and continue
+    const nextTurnIdx = game.currentTurnIndex % survivingPlayers.length;
     return applyPatch(gameAfterCard, {
-      status: "finished",
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "game_ended",
-        actorId:   "system",
-        payload:   { reason: "immediate_defeat", causedBy: actorId },
-      }],
+      turnOrder:        survivingPlayers,
+      currentTurnIndex: nextTurnIdx,
+      setNumber:        arith.before,
+      // Remove the bust card by cardId (not slice) to be safe against future field effects
+      field:            gameAfterCard.field.filter(fc => fc.cardId !== action.cardId),
+      excludedCards:    [...gameAfterCard.excludedCards, action.cardId],
+      hands:            handsWithoutActor,
+      appendEvents:     [eliminatedEvent],
     });
   }
 
