@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useWebSocket, getPlayerId } from "../hooks/useWebSocket";
 import { useGameState } from "../hooks/useGameState";
@@ -18,6 +18,10 @@ export function SessionView() {
 
   const { state, applyMessage } = useGameState();
 
+  // Capture location.state once on mount so it doesn't trigger the result-navigation
+  // effect multiple times if location.state reference changes during the session.
+  const initialLocationState = useRef(location.state);
+
   const { status, send } = useWebSocket({
     roomId,
     playerName,
@@ -27,12 +31,16 @@ export function SessionView() {
     },
   });
 
-  // Navigate to result when session ends
+  // Navigate to result when session ends — pass session + room so ResultView is self-contained.
+  // Use initialLocationState ref (not live location.state) to avoid double-navigation on re-render.
   useEffect(() => {
-    if (state.session?.status === "finished") {
-      navigate(`/room/${roomId}/result`, { replace: true, state: location.state });
+    if (state.session?.status === "finished" && state.session && state.room) {
+      navigate(`/room/${roomId}/result`, {
+        replace: true,
+        state: { ...initialLocationState.current, session: state.session, room: state.room },
+      });
     }
-  }, [state.session?.status, navigate, roomId, location.state]);
+  }, [state.session?.status, state.session, state.room, navigate, roomId]);
 
   const sendAction = useCallback((action: Action) => {
     send("client:action", { action });
