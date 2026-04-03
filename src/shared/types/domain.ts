@@ -204,6 +204,7 @@ export interface GamePatch {
   field?:                FieldCard[];
   hands?:                Record<PlayerId, CardId[]>;
   usedStrategyCounts?:   Record<PlayerId, Record<StrategyId, number>>;
+  turnOrder?:            PlayerId[];
   currentTurnIndex?:     number;
   resetCount?:           number;
   raidState?:            RaidState | null;
@@ -232,6 +233,7 @@ export type EventType =
   | "raid_round_started"
   | "hp_changed"
   | "card_drawn"
+  | "player_eliminated"
   | "game_ended"
   | "session_ended"
   | "negotiation_declared"
