@@ -135,10 +135,12 @@ export interface ActionResultPayload {
   actorId:           PlayerId;
   arithmeticResult?: ArithmeticResult;
   fieldCard?:        FieldCard;
+  fieldOverride?:    FieldCard[];
   effectsApplied:    EffectId[];
   newSetNumber?:     number;
   raidHpChanges?:    Record<PlayerId | "boss", number>;
   deckCount:         number;
+  handCounts?:       Record<PlayerId, number>;
   events:            EventLog[];
 }
 
