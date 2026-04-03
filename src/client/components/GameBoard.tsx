@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   GameView, Session, Room, PlayerId, CardId, Action,
 } from "../../shared/types/domain";
+import type { WsStatus } from "../hooks/useWebSocket";
 import { PlayerList }    from "./PlayerList";
 import { FieldDisplay }  from "./FieldDisplay";
 import { HandDisplay }   from "./HandDisplay";
@@ -16,7 +17,7 @@ interface Props {
   room:          Room     | null;
   playerId:      PlayerId;
   role:          "player" | "spectator";
-  wsStatus:      "connecting" | "connected" | "reconnecting" | "disconnected";
+  wsStatus:      WsStatus;
   onAction:      (action: Action) => void;
   onResetOrRaid: (choice: "reset" | "raid") => void;
 }

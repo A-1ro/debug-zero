@@ -32,7 +32,7 @@ import type {
   ResetOrRaidPayload,
   ServerMessage,
 } from "../../shared/types/messages";
-import basicYaml from "../../../rules/basic.yaml";
+import basicYaml from "../../../rules/basic.yaml?raw";
 import {
   ROOM_NOT_FOUND,
   ROOM_HOST_REQUIRED,
