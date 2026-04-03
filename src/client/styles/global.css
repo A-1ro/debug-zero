@@ -1,0 +1,79 @@
+/* ============================================================
+   Global CSS — DEBUG ZERO
+   Design tokens + base reset shared by all views
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:          #060b14;
+  --bg-panel:    #0c1521;
+  --bg-card:     #0f1e30;
+  --border:      #0d3a5e;
+  --border-glow: #1a5fa0;
+  --cyan:        #00e5ff;
+  --cyan-dim:    #007a99;
+  --purple:      #8b5cf6;
+  --green:       #00ff8c;
+  --red:         #ff1a4b;
+  --amber:       #ffaa00;
+  --text:        #c8d8e8;
+  --text-dim:    #4a6080;
+  --text-muted:  #2a3a50;
+  --font-mono:   'Share Tech Mono', 'Courier New', monospace;
+  --font-title:  'Orbitron', 'Share Tech Mono', monospace;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  min-height: 100vh;
+}
+
+/* Grid background — applied to body via pseudo-element from views */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Scanline overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}

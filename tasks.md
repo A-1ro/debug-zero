@@ -15,10 +15,10 @@
 - [x] #8 戦略カード効果ハンドラの実装 (8種)
 - [x] #9 バグカード効果ハンドラの実装 (8種)
 - [x] #10 RoomRepository / RoomService の実装
-- [ ] #11 SessionService の実装
-- [ ] #12 WebSocket 基盤の実装
-- [ ] #13 Hono サーバエントリポイントの実装
-- [ ] #14 クライアント基盤の実装
+- [x] #11 SessionService の実装
+- [x] #12 WebSocket 基盤の実装
+- [x] #13 Hono サーバエントリポイントの実装
+- [x] #14 クライアント基盤の実装
 - [ ] #15 TopView の実装
 - [ ] #16 RoomView (ロビー) の実装
 - [ ] #17 GameBoard コンポーネント群の実装
