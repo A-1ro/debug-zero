@@ -84,6 +84,7 @@
 }
 
 .strategyLabel {
+  display: inline-block;
   font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
