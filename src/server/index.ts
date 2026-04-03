@@ -21,7 +21,9 @@ app.get("/room/:roomId/ws", async (c) => {
   const roomId = c.req.param("roomId");
   const id = c.env.ROOM.idFromName(roomId);
   const stub = c.env.ROOM.get(id);
-  return stub.fetch(c.req.raw);
+  const wsUrl = new URL(c.req.raw.url);
+  wsUrl.pathname = "/ws";
+  return stub.fetch(new Request(wsUrl.toString(), c.req.raw));
 });
 
 /**
