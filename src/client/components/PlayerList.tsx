@@ -49,6 +49,11 @@ export function PlayerList({ game, session, room, playerId }: Props) {
             ].join(" ")}>
               {roomPlayer?.name ?? pid.slice(0, 8)}
             </div>
+            {sessionPlayer?.strategyId && (
+              <div className={s.strategyRow}>
+                <span className={s.strategyLabel}>{sessionPlayer.strategyId}</span>
+              </div>
+            )}
             <div className={s.statsRow}>
               <span>HAND</span>
               <span className={s.statsVal}>{isSelf ? game.hand.length : handCount}</span>

@@ -79,6 +79,20 @@
 .badgeHost    { color: var(--amber); border-color: rgba(255,170,0,0.4); }
 .badgeTurn    { color: var(--green); border-color: rgba(0,255,140,0.4); animation: pulse 1.5s infinite; }
 
+.strategyRow {
+  margin-bottom: 6px;
+}
+
+.strategyLabel {
+  display: inline-block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+  border: 1px solid rgba(255,170,0,0.3);
+  padding: 1px 6px;
+}
+
 .statsRow {
   display: flex;
   justify-content: space-between;
