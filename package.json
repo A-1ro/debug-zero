@@ -10,12 +10,17 @@
   },
   "dependencies": {
     "hono": "^4.12.8",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.14.0"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.2.3",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.9.3",
     "vite": "^6.3.5",
     "vite-ssr-components": "^0.5.2",

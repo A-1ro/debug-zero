@@ -1,12 +1,10 @@
-import { Hono } from 'hono'
-import { renderer } from './renderer'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { App } from "./client/App";
 
-const app = new Hono()
-
-app.use(renderer)
-
-app.get('/', (c) => {
-  return c.render(<h1>Hello!</h1>)
-})
-
-export default app
+const root = document.getElementById("root")!;
+createRoot(root).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);

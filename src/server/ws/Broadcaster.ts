@@ -1,5 +1,5 @@
-import type { PlayerId } from "../../shared/types/domain";
-import type { ServerMessage } from "../../shared/types/messages";
+import type { PlayerId, MessageId } from "../../shared/types/domain";
+import type { ServerMessage, ErrorPayload } from "../../shared/types/messages";
 import type { ConnectionManager } from "./ConnectionManager";
 
 /**
@@ -65,11 +65,14 @@ export class Broadcaster {
    */
   sendError(
     targetPlayerId: PlayerId,
-    errorMessage: Omit<ServerMessage, "visibility" | "targetPlayerId">
+    params: { id: MessageId; roomId: string; payload: ErrorPayload }
   ): void {
     const message: ServerMessage = {
-      ...errorMessage,
-      visibility: "player",
+      id:            params.id,
+      type:          "server:error",
+      roomId:        params.roomId,
+      payload:       params.payload,
+      visibility:    "player",
       targetPlayerId,
     };
     this.sendToPlayer(targetPlayerId, JSON.stringify(message));
