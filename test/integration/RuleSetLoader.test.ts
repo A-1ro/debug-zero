@@ -9,6 +9,10 @@ import type { RuleSet } from "../../src/shared/types/rules";
 
 let ruleSet: RuleSet;
 
+// NOTE: loadFromFile() writes to globalRuleSetRegistry. The registry has no clear() method,
+// so state persists across test files when run in the same process. This is acceptable as
+// basic.yaml is idempotent to re-register. An afterAll cleanup can be added if
+// globalRuleSetRegistry gains an unregister/clear API in future.
 beforeAll(async () => {
   const yamlPath = join(process.cwd(), "rules", "basic.yaml");
   ruleSet = await RuleSetLoader.loadFromFile(yamlPath);
@@ -22,7 +26,7 @@ describe("RuleSetLoader: basic.yaml のパース", () => {
   it("ruleSet が正しくロードされる", () => {
     expect(ruleSet).toBeDefined();
     expect(ruleSet.id).toBe("basic");
-    expect(typeof ruleSet.version).toBe("string");
+    expect(ruleSet.version).toBe("1.0.0");
   });
 
   it("strategies が 8 件あること", () => {

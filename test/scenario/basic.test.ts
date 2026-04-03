@@ -114,6 +114,8 @@ describe("Scenario: 通常勝利 (setNumber → 0)", () => {
     expect(g.setNumber).toBe(5);
     expect(g.phase).toBe("normal");
     expect(g.status).toBe("in-progress");
+    // hand: played "5-001", drew "9-001" → still 2 cards
+    expect(g.hands[P1]).toHaveLength(2);
 
     // P2 plays "4-001" sub → 5-4=1, draws "8-001"
     g = applyAction(g, { type: "play_card", cardId: "4-001", operation: "sub" }, makeCtx(P2));
@@ -285,6 +287,7 @@ describe("Scenario: SessionService — residualBugs の引き継ぎ", () => {
       ruleSet,
     });
 
+    expect(startResult.ok).toBe(true);
     if (!startResult.ok) return;
     const { session, game } = startResult.value;
 
@@ -325,6 +328,7 @@ describe("Scenario: セッション勝利条件", () => {
       ruleSet,
     });
 
+    expect(startResult.ok).toBe(true);
     if (!startResult.ok) return;
     const { session } = startResult.value;
 
@@ -353,6 +357,7 @@ describe("Scenario: セッション勝利条件", () => {
       ruleSet,
     });
 
+    expect(startResult.ok).toBe(true);
     if (!startResult.ok) return;
     const { session } = startResult.value;
 
