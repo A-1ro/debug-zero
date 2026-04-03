@@ -84,6 +84,12 @@ export interface Env {
   ROOM: DurableObjectNamespace;
 }
 
+// ── WebSocket attachment stored via serializeAttachment ───────
+// Stored immediately on upgrade (playerId unknown yet).
+// Updated to include playerId after client:join_room is processed.
+// Used on cold-start to restore ConnectionManager from getWebSockets().
+type WsAttachment = { connectionId: string; playerId?: PlayerId };
+
 // ============================================================
 // RoomDurableObject
 // ============================================================
@@ -136,6 +142,21 @@ export class RoomDurableObject implements DurableObject {
 
     // Register message handlers
     this.registerHandlers();
+
+    // Restore Hibernatable WebSocket connections after DO restart.
+    // CF Workers may evict the DO from memory between messages; acceptWebSocket()
+    // keeps WS connections alive but ConnectionManager is reset on each cold start.
+    // Iterate getWebSockets() to re-register connections so broadcasts reach all clients.
+    for (const ws of this.state.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | string | null;
+      if (!att) continue;
+      const connectionId = typeof att === "string" ? att : att.connectionId;
+      const playerId    = typeof att === "string" ? undefined : att.playerId;
+      if (connectionId) {
+        this.connectionManager.add(connectionId, ws);
+        if (playerId) this.connectionManager.bind(playerId, connectionId);
+      }
+    }
   }
 
   // ── HTTP / WebSocket upgrade ──────────────────────────────────
@@ -153,8 +174,9 @@ export class RoomDurableObject implements DurableObject {
 
       const connectionId = crypto.randomUUID();
       this.connectionManager.add(connectionId, server);
-      // Store connectionId on the WebSocket for retrieval in webSocketMessage
-      server.serializeAttachment(connectionId);
+      // Store connectionId on the WebSocket for retrieval in webSocketMessage.
+      // playerId is added later (after client:join_room) for hibernation recovery.
+      server.serializeAttachment({ connectionId } as WsAttachment);
 
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -166,7 +188,9 @@ export class RoomDurableObject implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const connectionId: string = ws.deserializeAttachment();
+    const att = ws.deserializeAttachment() as WsAttachment | string | null;
+    const connectionId = typeof att === "string" ? att : (att?.connectionId ?? "");
+    if (!connectionId) { ws.close(4001, "missing attachment"); return; }
     const result = await this.router.route(
       typeof message === "string" ? message : new TextDecoder().decode(message),
       connectionId
@@ -181,7 +205,9 @@ export class RoomDurableObject implements DurableObject {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    const connectionId: string = ws.deserializeAttachment();
+    const att = ws.deserializeAttachment() as WsAttachment | string | null;
+    const connectionId = typeof att === "string" ? att : (att?.connectionId ?? "");
+    if (!connectionId) return;
     const playerId = this.connectionManager.remove(connectionId);
     if (!playerId) return;
 
@@ -243,6 +269,7 @@ export class RoomDurableObject implements DurableObject {
       } else {
         this.connectionManager.bind(message.senderId, connectionId);
       }
+      this.updateWsAttachment(connectionId, message.senderId);
       await this.sendStateSync(message.senderId, room);
       return;
     }
@@ -266,6 +293,7 @@ export class RoomDurableObject implements DurableObject {
     }
 
     this.connectionManager.bind(message.senderId, connectionId);
+    this.updateWsAttachment(connectionId, message.senderId);
     const updatedRoom = result.value;
     await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
@@ -628,6 +656,20 @@ export class RoomDurableObject implements DurableObject {
   }
 
   private async sendStateSync(playerId: PlayerId, room: Room): Promise<void> {
+    // Always send current room state so reconnecting players see the lobby correctly.
+    this.broadcaster.send(
+      {
+        id:            crypto.randomUUID() as MessageId,
+        type:          "server:room_updated",
+        roomId:        room.id,
+        payload:       { room },
+        visibility:    "player",
+        targetPlayerId: playerId,
+      },
+      () => "player",
+      [playerId]
+    );
+
     const session = room.sessionId
       ? await this.state.storage.get<Session>("session")
       : null;
@@ -678,6 +720,27 @@ export class RoomDurableObject implements DurableObject {
     const roleOf = (pid: PlayerId) =>
       room.players.find((p) => p.id === pid)?.role ?? "player";
     this.broadcaster.send(message, roleOf, allPlayerIds);
+  }
+
+  /**
+   * Update the WebSocket attachment to include playerId.
+   * Called after bind() so the next cold-start can restore both
+   * connectionId AND playerId into ConnectionManager.
+   */
+  private updateWsAttachment(connectionId: string, playerId: PlayerId): void {
+    for (const ws of this.state.getWebSockets()) {
+      const att = ws.deserializeAttachment() as WsAttachment | string | null;
+      if (!att) continue;
+      const cid = typeof att === "string" ? att : att.connectionId;
+      if (cid === connectionId) {
+        try {
+          ws.serializeAttachment({ connectionId, playerId } as WsAttachment);
+        } catch {
+          // ws may have been closed (e.g. during reconnect); safe to ignore
+        }
+        break;
+      }
+    }
   }
 
   private async broadcastRoomUpdated(room: Room): Promise<void> {
