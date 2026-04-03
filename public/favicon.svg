@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="32" height="32" fill="#0a0a0f"/>
+
+  <!-- Outer border -->
+  <rect x="1" y="1" width="30" height="30" fill="none" stroke="#00e5ff" stroke-width="1" opacity="0.4"/>
+
+  <!-- Corner marks -->
+  <polyline points="1,5 1,1 5,1"   fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="27,1 31,1 31,5" fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="1,27 1,31 5,31" fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="27,31 31,31 31,27" fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+
+  <!-- "0" center glyph -->
+  <text
+    x="16"
+    y="22"
+    text-anchor="middle"
+    font-family="'Courier New', monospace"
+    font-weight="700"
+    font-size="18"
+    fill="#00ff8c"
+    filter="url(#glow)"
+  >0</text>
+
+  <!-- Slash through zero -->
+  <line x1="11" y1="21" x2="21" y2="11" stroke="#00ff8c" stroke-width="1.5" opacity="0.6" filter="url(#glow)"/>
+</svg>
