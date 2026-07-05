@@ -479,7 +479,11 @@ export class RoomDurableObject implements DurableObject {
       }, updatedRoom);
     }
 
-    // Broadcast game_started: hand counts to all, individual hands to each player
+    await this.broadcastGameStart(updatedRoom, session, game);
+  }
+
+  /** Broadcast game_started (counts to all) + individual hand_updated per player. */
+  private async broadcastGameStart(room: Room, session: Session, game: Game): Promise<void> {
     const handCounts: Record<PlayerId, number> = {};
     for (const [pid, hand] of Object.entries(game.hands)) {
       handCounts[pid as PlayerId] = hand.length;
@@ -501,9 +505,8 @@ export class RoomDurableObject implements DurableObject {
         handCounts,
       },
       visibility: "all",
-    }, updatedRoom);
+    }, room);
 
-    // Send individual hands
     for (const player of session.players) {
       await this.broadcast({
         id: crypto.randomUUID() as MessageId,
@@ -513,7 +516,7 @@ export class RoomDurableObject implements DurableObject {
         payload: { hand: game.hands[player.playerId] ?? [] },
         visibility: "player",
         targetPlayerId: player.playerId,
-      }, updatedRoom);
+      }, room);
     }
   }
 
@@ -599,8 +602,8 @@ export class RoomDurableObject implements DurableObject {
       }, room);
     }
 
-    // Check game end
-    if (updatedGame.status === "finished" && updatedGame.winnerId) {
+    // Check game end (winnerId may be absent — e.g. boss victory in raid)
+    if (updatedGame.status === "finished") {
       await this.handleGameEnd(room, session, updatedGame, ruleSet);
     }
 
@@ -665,17 +668,31 @@ export class RoomDurableObject implements DurableObject {
     const winResult: import("../../shared/types/domain").WinResult = {
       type: winType,
       winnerId: game.winnerId,
+      ...(game.winnerIds?.length ? { winnerIds: game.winnerIds } : {}),
     };
 
-    const sessionResult = game.winnerId
-      ? await this.sessionService.recordWin({
-          sessionId: session.id,
-          winnerId: game.winnerId,
-          ruleSet,
-        })
-      : { ok: false as const, errorCode: "NO_WINNER" };
+    // Record a win for every winner (showdown ties can produce multiple winners)
+    const winners = game.winnerIds?.length
+      ? game.winnerIds
+      : game.winnerId
+        ? [game.winnerId]
+        : [];
+    let updatedSession = session;
+    for (const winnerId of winners) {
+      const res = await this.sessionService.recordWin({
+        sessionId: session.id,
+        winnerId,
+        ruleSet,
+      });
+      if (res.ok) updatedSession = res.value;
+    }
 
-    const updatedSession = sessionResult.ok ? sessionResult.value : session;
+    // No winner at all (e.g. boss defeats every player in raid) — the boss
+    // takes the session; end it without an individual winner
+    if (winners.length === 0) {
+      const ended = await this.sessionService.endSession({ sessionId: session.id });
+      if (ended.ok) updatedSession = ended.value;
+    }
 
     // game_ended: strategies stay masked while the session continues
     // (session_ended below reveals them once the session is decided)
@@ -707,6 +724,19 @@ export class RoomDurableObject implements DurableObject {
         },
         visibility: "all",
       }, room);
+      return;
+    }
+
+    // Session continues — start the next game (best-of-N: first to winsRequired).
+    // Without this the session used to stall forever after game 1.
+    const next = await this.sessionService.startNextGame({
+      sessionId: session.id,
+      finishedGame: game,
+      ruleSet,
+      effectResolver: this.effectResolver,
+    });
+    if (next.ok) {
+      await this.broadcastGameStart(room, next.value.session, next.value.game);
     }
   }
 

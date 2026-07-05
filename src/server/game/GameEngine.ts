@@ -6,6 +6,8 @@ import type {
   DrawCardAction,
   RemoveBugAction,
   ResetOrRaidAction,
+  ShowdownSubmitAction,
+  Operation,
   PlayerId,
   StrategyId,
   CardId,
@@ -105,6 +107,8 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
     ...(patch.resetCount         !== undefined && { resetCount:         patch.resetCount }),
     ...(patch.residualBugs       !== undefined && { residualBugs:       patch.residualBugs }),
     ...(patch.winnerId           !== undefined && { winnerId:           patch.winnerId }),
+    ...(patch.winnerIds          !== undefined && { winnerIds:          patch.winnerIds }),
+    ...(patch.showdownState      !== undefined && { showdownState:      patch.showdownState }),
     // raidState: null means clear the field; undefined means no change
     ...(patch.raidState !== undefined && {
       raidState: patch.raidState === null ? undefined : patch.raidState,
@@ -315,28 +319,135 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
 // ============================================================
 
 function applyDrawCard(game: Game, _action: DrawCardAction, ctx: EngineContext): Game {
-  const { actorId } = ctx;
+  const { actorId, ruleSet } = ctx;
 
-  if (game.deck.length === 0) {
-    // No cards available — just advance the turn
-    return applyPatch(game, { currentTurnIndex: nextTurnIndex(game) });
+  let gameAfterDraw = game;
+  if (game.deck.length > 0) {
+    const [drawnCard, ...remainingDeck] = game.deck;
+    const updatedHand = [...(game.hands[actorId] ?? []), drawnCard];
+    gameAfterDraw = applyPatch(game, {
+      deck:  remainingDeck,
+      hands: { ...game.hands, [actorId]: updatedHand },
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "card_drawn",
+        actorId,
+        payload:   { cardId: drawnCard },
+      }],
+    });
   }
 
-  const [drawnCard, ...remainingDeck] = game.deck;
-  const updatedHand = [...(game.hands[actorId] ?? []), drawnCard];
-  const gameAfterDraw = applyPatch(game, {
-    deck:  remainingDeck,
-    hands: { ...game.hands, [actorId]: updatedHand },
+  const gameAfterTurn = applyPatch(gameAfterDraw, {
+    currentTurnIndex: nextTurnIndex(gameAfterDraw),
+  });
+
+  // Deck may have just run out — the deck-empty → showdown transition must
+  // fire on draws too, not only on card plays (otherwise the game stalls in
+  // normal phase until someone happens to play a card)
+  const transition = checkPhaseTransition(gameAfterTurn, ruleSet.phases);
+  if (transition && isPhaseTransition(transition.to)) {
+    return applyPatch(gameAfterTurn, {
+      phase: transition.to,
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "phase_changed",
+        actorId:   "system",
+        payload: {
+          from:   gameAfterTurn.phase,
+          to:     transition.to,
+          reason: transition.conditionType,
+        },
+      }],
+    });
+  }
+
+  return gameAfterTurn;
+}
+
+// ============================================================
+// showdown_submit
+// ============================================================
+
+/** Combine up to two card values with an operation (div rounds up, like ArithmeticJudge). */
+function combineShowdownValue(values: number[], operation?: Operation): number {
+  if (values.length === 1) return values[0];
+  const [a, b] = values;
+  switch (operation) {
+    case "add": return a + b;
+    case "sub": return a - b;
+    case "mul": return a * b;
+    case "div": return Math.ceil(a / b); // b=0 is rejected by the validator
+    default:    return a + b; // unreachable (validator requires operation for 2 cards)
+  }
+}
+
+/**
+ * Showdown (§5.3 決戦フェーズ): each surviving player submits 1-2 cards with an
+ * operation; once everyone has submitted, the value closest to setNumber wins.
+ * Ties: fewer cards wins; still tied → all tied players win.
+ */
+function applyShowdownSubmit(game: Game, action: ShowdownSubmitAction, ctx: EngineContext): Game {
+  const { actorId } = ctx;
+
+  const value = combineShowdownValue(action.cardIds.map(cardValueFromId), action.operation);
+  const submissions = {
+    ...(game.showdownState?.submissions ?? {}),
+    [actorId]: { cardIds: action.cardIds, value },
+  };
+  const newHand = (game.hands[actorId] ?? []).filter(id => !action.cardIds.includes(id));
+
+  let updated = applyPatch(game, {
+    hands:         { ...game.hands, [actorId]: newHand },
+    excludedCards: [...game.excludedCards, ...action.cardIds],
+    showdownState: { submissions },
     appendEvents: [{
       id:        newEventId(),
       timestamp: Date.now(),
-      type:      "card_drawn",
+      type:      "showdown_submitted",
       actorId,
-      payload:   { cardId: drawnCard },
+      payload:   { cardIds: action.cardIds, value },
     }],
   });
 
-  return applyPatch(gameAfterDraw, { currentTurnIndex: nextTurnIndex(gameAfterDraw) });
+  // Judge once every surviving player has submitted
+  const alive = updated.turnOrder;
+  if (!alive.every(pid => submissions[pid])) return updated;
+
+  let winners: PlayerId[] = [];
+  let bestDist = Infinity;
+  let bestCount = Infinity;
+  for (const pid of alive) {
+    const sub = submissions[pid];
+    const dist = Math.abs(updated.setNumber - sub.value);
+    const count = sub.cardIds.length;
+    if (dist < bestDist || (dist === bestDist && count < bestCount)) {
+      winners = [pid];
+      bestDist = dist;
+      bestCount = count;
+    } else if (dist === bestDist && count === bestCount) {
+      winners.push(pid);
+    }
+  }
+
+  return applyPatch(updated, {
+    status:    "finished",
+    winnerId:  winners[0],
+    winnerIds: winners,
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "game_ended",
+      actorId:   "system",
+      payload: {
+        winType:  "showdown_closest",
+        winnerIds: winners,
+        distance:  bestDist,
+        submissions,
+      },
+    }],
+  });
 }
 
 // ============================================================
@@ -542,6 +653,8 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
       return applyRemoveBug(game, action, ctx);
     case "reset_or_raid":
       return applyResetOrRaid(game, action, ctx);
+    case "showdown_submit":
+      return applyShowdownSubmit(game, action, ctx);
     case "select_strategy":
       // select_strategy is a session-level action; GameEngine returns game unchanged
       return game;

@@ -5,6 +5,7 @@ import type {
   RemoveBugAction,
   DrawCardAction,
   ResetOrRaidAction,
+  ShowdownSubmitAction,
   SelectStrategyAction,
   ValidationResult,
   PlayerId,
@@ -21,6 +22,8 @@ import {
   ACTION_RESET_LIMIT_EXCEEDED,
   ACTION_INVALID_BUG_REMOVAL_COST,
   ACTION_INVALID_PHASE,
+  ACTION_INVALID_OPERATION,
+  ACTION_ALREADY_SUBMITTED,
   SESSION_INVALID_STRATEGY,
 } from "../../shared/constants";
 
@@ -63,6 +66,10 @@ function validatePlayCard(
   ctx: ValidateContext,
 ): ValidationResult {
   const { actorId } = ctx;
+
+  if (game.phase === "showdown") {
+    return fail(ACTION_INVALID_PHASE, "Use showdown_submit during the showdown phase");
+  }
 
   if (!isCurrentTurnPlayer(game, actorId)) {
     return fail(ACTION_NOT_YOUR_TURN);
@@ -119,6 +126,10 @@ function validatePlayCard(
 
 function validateDrawCard(game: Game, ctx: ValidateContext): ValidationResult {
   const { actorId, ruleSet } = ctx;
+
+  if (game.phase === "showdown") {
+    return fail(ACTION_INVALID_PHASE, "Use showdown_submit during the showdown phase");
+  }
 
   if (!isCurrentTurnPlayer(game, actorId)) {
     return fail(ACTION_NOT_YOUR_TURN);
@@ -218,6 +229,51 @@ function validateResetOrRaid(
 }
 
 // ============================================================
+// showdown_submit
+// ============================================================
+
+function validateShowdownSubmit(
+  game: Game,
+  action: ShowdownSubmitAction,
+  ctx: ValidateContext,
+): ValidationResult {
+  const { actorId } = ctx;
+
+  if (game.phase !== "showdown") {
+    return fail(ACTION_INVALID_PHASE, "showdown_submit is only available in showdown phase");
+  }
+  // Showdown has no turn order, but eliminated players may not submit
+  if (!game.turnOrder.includes(actorId)) {
+    return fail(ACTION_NOT_YOUR_TURN, "Eliminated players cannot submit");
+  }
+  if (game.showdownState?.submissions[actorId]) {
+    return fail(ACTION_ALREADY_SUBMITTED);
+  }
+
+  const hand = game.hands[actorId] ?? [];
+  const unique = new Set(action.cardIds);
+  if (action.cardIds.length < 1 || action.cardIds.length > 2 || unique.size !== action.cardIds.length) {
+    return fail(ACTION_INVALID_CARD, "Submit 1 or 2 distinct cards");
+  }
+  for (const cardId of action.cardIds) {
+    if (!hand.includes(cardId)) {
+      return fail(ACTION_INVALID_CARD, `Card ${cardId} not in hand`);
+    }
+  }
+
+  if (action.cardIds.length === 2) {
+    if (!action.operation) {
+      return fail(ACTION_INVALID_OPERATION, "operation is required for 2-card submissions");
+    }
+    if (action.operation === "div" && cardValueFromId(action.cardIds[1]) === 0) {
+      return fail(ACTION_INVALID_OPERATION, "Cannot divide by zero");
+    }
+  }
+
+  return ok();
+}
+
+// ============================================================
 // select_strategy
 // ============================================================
 
@@ -257,6 +313,8 @@ export function validate(
       return validateRemoveBug(game, action, ctx);
     case "reset_or_raid":
       return validateResetOrRaid(game, action, ctx);
+    case "showdown_submit":
+      return validateShowdownSubmit(game, action, ctx);
     case "select_strategy":
       return validateSelectStrategy(action, ctx);
   }
