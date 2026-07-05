@@ -124,6 +124,11 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
 // ============================================================
 
 function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): Game {
+  // Raid combat has entirely different card semantics (HP damage, no arithmetic)
+  if (game.phase === "raid") {
+    return applyRaidPlayCard(game, action, ctx);
+  }
+
   const { actorId, ruleSet, playerStrategies, effectResolver, rng = Math.random } = ctx;
   const value = cardValueFromId(action.cardId);
   const card: Card = { id: action.cardId, value };
@@ -321,6 +326,27 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
 function applyDrawCard(game: Game, _action: DrawCardAction, ctx: EngineContext): Game {
   const { actorId, ruleSet } = ctx;
 
+  // Raid refill (手札補充): draw one card, then pass the raid turn
+  if (game.phase === "raid" && game.raidState) {
+    const rs = game.raidState;
+    const [drawnCard, ...remainingDeck] = game.deck;
+    return applyPatch(game, {
+      deck:  remainingDeck,
+      hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
+      raidState: {
+        ...rs,
+        currentTurnIndex: nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder),
+      },
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "card_drawn",
+        actorId,
+        payload:   { cardId: drawnCard, raid: true },
+      }],
+    });
+  }
+
   let gameAfterDraw = game;
   if (game.deck.length > 0) {
     const [drawnCard, ...remainingDeck] = game.deck;
@@ -471,8 +497,19 @@ function payRemovalCost(
       return { ...patch, raidState: { ...game.raidState, playerHPs: newHPs } };
     }
     case "hand_card": {
-      const toRemove = costCardIds.slice(0, cost.amount);
-      const newHand = (game.hands[actorId] ?? []).filter(id => !toRemove.includes(id));
+      // Only cards that actually satisfy the cost criteria may be spent —
+      // slicing the raw list allowed paying an even-card cost with an odd card
+      const hand = game.hands[actorId] ?? [];
+      const eligible = costCardIds.filter(id => {
+        if (!hand.includes(id)) return false;
+        const v = cardValueFromId(id);
+        if (cost.value === "any") return true;
+        if (cost.value === "even") return v % 2 === 0;
+        if (cost.value === "odd") return v % 2 !== 0;
+        return v === cost.value;
+      });
+      const toRemove = eligible.slice(0, cost.amount);
+      const newHand = hand.filter(id => !toRemove.includes(id));
       return {
         ...patch,
         hands:        { ...game.hands, [actorId]: newHand },
@@ -505,6 +542,19 @@ function applyRemoveBug(game: Game, action: RemoveBugAction, ctx: EngineContext)
   };
 
   patch = payRemovalCost(game, actorId, bugDef.removalCost, action.costCardIds ?? [], patch);
+
+  // Raid: bug removal consumes the player's raid turn and clears the active bug
+  if (game.phase === "raid" && game.raidState) {
+    const rs = patch.raidState && patch.raidState !== null ? patch.raidState : game.raidState;
+    patch = {
+      ...patch,
+      raidState: {
+        ...rs,
+        activeBugId: rs.activeBugId === action.bugId ? "" : rs.activeBugId,
+        currentTurnIndex: nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder),
+      },
+    };
+  }
 
   return applyPatch(game, patch);
 }
@@ -558,55 +608,80 @@ function applyReset(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: () => 
   });
 }
 
-function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet): Game {
+/** Pick a random not-yet-active bug for a new raid round ("" if none left). */
+function pickRaidBug(residualBugs: string[], ruleSet: RuleSet, rng: () => number): string {
+  const candidates = ruleSet.bugs.map(b => b.id).filter(id => !residualBugs.includes(id));
+  if (candidates.length === 0) return "";
+  return candidates[Math.floor(rng() * candidates.length)];
+}
+
+function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: () => number): Game {
   // bossHP = sum of rawValues of all field cards (not effectiveValue — CLAUDE.md spec)
   const bossHP = game.field.reduce((sum, fc) => sum + fc.rawValue, 0);
 
   const { initialHP } = ruleSet.initialConfig;
   const playerHPs: Record<PlayerId, number> = {};
   for (const pid of game.turnOrder) {
-    playerHPs[pid] = initialHP;
+    if (pid !== actorId) playerHPs[pid] = initialHP;
   }
 
   // The player who played the 0 card becomes the boss
   const bossPlayerId = actorId;
-  const playerTurnOrder = game.turnOrder.filter(pid => pid !== bossPlayerId);
+  const playerCount = game.turnOrder.length - 1;
+  // Boss takes the last slot of each round (players act first, then the boss
+  // acts ceil(playerCount / 2) times)
+  const raidTurnOrder = [...game.turnOrder.filter(pid => pid !== bossPlayerId), bossPlayerId];
+
+  // Round start: a bug spawns (removable during the raid via remove_bug)
+  const spawnedBug = pickRaidBug(game.residualBugs, ruleSet, rng);
 
   const raidState = {
     bossPlayerId,
     bossHP,
     playerHPs,
-    activeBugId:      "",
+    activeBugId:      spawnedBug,
     roundIndex:       0,
-    turnOrder:        playerTurnOrder,
+    turnOrder:        raidTurnOrder,
     currentTurnIndex: 0,
-    bossActionsLeft:  Math.ceil(game.turnOrder.length / 2),
+    bossActionsLeft:  Math.ceil(playerCount / 2),
   };
 
   // Clear the field — move all field card IDs to excludedCards
   const allFieldCardIds = game.field.map(fc => fc.cardId);
 
+  const events: EventLog[] = [
+    {
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "raid_started",
+      actorId,
+      payload:   { bossHP, bossPlayerId },
+    },
+    {
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "phase_changed",
+      actorId:   "system",
+      payload:   { from: "normal", to: "raid", reason: "card_zero_played_raid" },
+    },
+  ];
+  if (spawnedBug) {
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "bug_activated",
+      actorId:   "system",
+      payload:   { bugId: spawnedBug, roundIndex: 0 },
+    });
+  }
+
   return applyPatch(game, {
     phase:        "raid",
     field:        [],
     excludedCards: [...game.excludedCards, ...allFieldCardIds],
+    residualBugs:  spawnedBug ? [...game.residualBugs, spawnedBug] : game.residualBugs,
     raidState,
-    appendEvents: [
-      {
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "raid_started",
-        actorId,
-        payload:   { bossHP, bossPlayerId },
-      },
-      {
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "phase_changed",
-        actorId:   "system",
-        payload:   { from: "normal", to: "raid", reason: "card_zero_played_raid" },
-      },
-    ],
+    appendEvents:  events,
   });
 }
 
@@ -617,8 +692,198 @@ function applyResetOrRaid(game: Game, action: ResetOrRaidAction, ctx: EngineCont
   if (target === "normal") {
     return applyReset(game, actorId, ruleSet, rng);
   } else {
-    return applyRaidStart(game, actorId, ruleSet);
+    return applyRaidStart(game, actorId, ruleSet, rng);
   }
+}
+
+// ============================================================
+// raid combat
+// ============================================================
+
+/**
+ * Raid-phase play_card (§5.3 レイド戦ラウンド):
+ *  - players attack the boss: bossHP -= rawValue
+ *  - the boss attacks a player: playerHP -= rawValue, ceil(playerCount/2) times
+ *    per round; after the boss finishes, a new round starts (new bug spawns,
+ *    empty deck is refilled by shuffling the field back in)
+ * HP math always uses rawValue (Value-Corruption never affects HP — CLAUDE.md).
+ */
+function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): Game {
+  const rs = game.raidState!;
+  const { actorId, ruleSet, rng = Math.random } = ctx;
+  const isBoss = actorId === rs.bossPlayerId;
+  const value = cardValueFromId(action.cardId);
+  const events: EventLog[] = [];
+
+  // Card moves hand → field (the raid field is recycled into the deck at round end)
+  const newHands = {
+    ...game.hands,
+    [actorId]: (game.hands[actorId] ?? []).filter(id => id !== action.cardId),
+  };
+  let field: FieldCard[] = [...game.field, {
+    cardId:         action.cardId,
+    playerId:       actorId,
+    operation:      "add",
+    rawValue:       value,
+    effectiveValue: value,
+  }];
+  let deck = game.deck;
+  let residualBugs = game.residualBugs;
+
+  let bossHP = rs.bossHP;
+  const playerHPs = { ...rs.playerHPs };
+  let turnOrder = [...rs.turnOrder];
+  let currentTurnIndex = rs.currentTurnIndex;
+  let bossActionsLeft = rs.bossActionsLeft;
+  let roundIndex = rs.roundIndex;
+  let activeBugId = rs.activeBugId;
+
+  events.push({
+    id:        newEventId(),
+    timestamp: Date.now(),
+    type:      "card_played",
+    actorId,
+    payload:   { cardId: action.cardId, target: isBoss ? action.targetId : "boss", raid: true },
+  });
+
+  if (isBoss) {
+    const target = action.targetId as PlayerId;
+    playerHPs[target] = (playerHPs[target] ?? 0) - value;
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "hp_changed",
+      actorId,
+      payload:   { target, delta: -value, hp: playerHPs[target] },
+    });
+    // A player at 0 HP drops out of the raid rotation
+    if (playerHPs[target] <= 0 && turnOrder.includes(target)) {
+      const removedIdx = turnOrder.indexOf(target);
+      turnOrder = turnOrder.filter(pid => pid !== target);
+      if (removedIdx < currentTurnIndex) currentTurnIndex--;
+      events.push({
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "player_eliminated",
+        actorId:   "system",
+        payload:   { playerId: target, reason: "raid_hp_zero" },
+      });
+    }
+
+    bossActionsLeft--;
+    if (bossActionsLeft <= 0) {
+      // Round complete → next round: players act again, a new bug spawns,
+      // and an empty deck is rebuilt by shuffling the field back in (§5.3-5)
+      roundIndex++;
+      const alivePlayers = turnOrder.filter(pid => pid !== rs.bossPlayerId);
+      bossActionsLeft = Math.ceil(alivePlayers.length / 2);
+      currentTurnIndex = 0;
+      if (deck.length === 0 && field.length > 0) {
+        deck = shuffleArray(field.map(fc => fc.cardId), rng);
+        field = [];
+      }
+      const spawned = pickRaidBug(residualBugs, ruleSet, rng);
+      if (spawned) {
+        residualBugs = [...residualBugs, spawned];
+        activeBugId = spawned;
+        events.push({
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "bug_activated",
+          actorId:   "system",
+          payload:   { bugId: spawned, roundIndex },
+        });
+      }
+      events.push({
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "raid_round_started",
+        actorId:   "system",
+        payload:   { roundIndex, bossActionsLeft },
+      });
+    }
+    // Boss keeps the turn until its actions for the round run out
+  } else {
+    bossHP -= value;
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "hp_changed",
+      actorId,
+      payload:   { target: "boss", delta: -value, hp: bossHP },
+    });
+    currentTurnIndex = nextRaidTurnIndex(currentTurnIndex, turnOrder);
+  }
+
+  const updated = applyPatch(game, {
+    hands: newHands,
+    field,
+    deck,
+    residualBugs,
+    raidState: {
+      ...rs,
+      bossHP,
+      playerHPs,
+      turnOrder,
+      currentTurnIndex,
+      bossActionsLeft,
+      roundIndex,
+      activeBugId,
+    },
+    appendEvents: events,
+  });
+
+  return resolveRaidEnd(updated, actorId);
+}
+
+/** Decide raid victory/defeat after an attack (§5.3-6 checkRaidEnd). */
+function resolveRaidEnd(game: Game, actorId: PlayerId): Game {
+  const rs = game.raidState!;
+
+  if (rs.bossHP <= 0) {
+    const exactZero = rs.bossHP === 0;
+    // Exact 0: every surviving player wins (+1 each), bugs are cleared.
+    // Below 0: only the player who dealt the final blow wins, and the bugs
+    // spawned in this raid stay residual for the next game (§11.5).
+    const survivors = Object.entries(rs.playerHPs)
+      .filter(([, hp]) => hp > 0)
+      .map(([pid]) => pid as PlayerId);
+    const winners = exactZero ? survivors : [actorId];
+    return applyPatch(game, {
+      status:    "finished",
+      winnerId:  winners[0],
+      winnerIds: winners,
+      ...(exactZero ? { residualBugs: [] } : {}),
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "game_ended",
+        actorId:   "system",
+        payload: {
+          winType: exactZero ? "raid_boss_hp_exact_zero" : "raid_boss_hp_below_zero",
+          winnerIds: winners,
+          bossHP: rs.bossHP,
+        },
+      }],
+    });
+  }
+
+  const allPlayersDead = Object.values(rs.playerHPs).every(hp => hp <= 0);
+  if (allPlayersDead) {
+    // Boss defeats everyone — boss takes the whole session (handled upstream)
+    return applyPatch(game, {
+      status: "finished",
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "game_ended",
+        actorId:   "system",
+        payload:   { winType: "raid_all_players_dead", bossPlayerId: rs.bossPlayerId },
+      }],
+    });
+  }
+
+  return game;
 }
 
 // ============================================================

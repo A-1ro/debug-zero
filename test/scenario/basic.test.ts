@@ -202,8 +202,9 @@ describe("Scenario: 0カード → レイド開始", () => {
     // bossHP = sum of field rawValues: 3+2+0 = 5
     expect(g.raidState!.bossHP).toBe(5);
     expect(g.raidState!.bossPlayerId).toBe(P1);
-    // playerHPs initialized to initialHP (10)
-    expect(g.raidState!.playerHPs[P1]).toBe(10);
+    // playerHPs initialized to initialHP (10) — the boss uses bossHP, not playerHPs
+    // (including the boss made the all-players-dead condition unreachable)
+    expect(g.raidState!.playerHPs[P1]).toBeUndefined();
     expect(g.raidState!.playerHPs[P2]).toBe(10);
     // field cleared
     expect(g.field).toHaveLength(0);

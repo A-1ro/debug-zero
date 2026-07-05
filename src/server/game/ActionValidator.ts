@@ -60,6 +60,27 @@ function isCurrentTurnPlayer(game: Game, actorId: PlayerId): boolean {
 // play_card
 // ============================================================
 
+/** Forbidden-bug play constraints (Odd/Even/Stack) — apply in normal and raid phases. */
+function checkForbiddenBugs(game: Game, action: PlayCardAction): ValidationResult {
+  const value = cardValueFromId(action.cardId);
+  const lastFieldCard = game.field.length > 0 ? game.field[game.field.length - 1] : undefined;
+
+  if (game.residualBugs.includes("Odd-Forbidden") && value % 2 !== 0) {
+    return fail(ACTION_BUG_FORBIDDEN, "Odd-Forbidden: odd cards are forbidden");
+  }
+  if (game.residualBugs.includes("Even-Forbidden") && value % 2 === 0) {
+    return fail(ACTION_BUG_FORBIDDEN, "Even-Forbidden: even cards are forbidden");
+  }
+  if (
+    game.residualBugs.includes("Stack-Forbidden") &&
+    lastFieldCard !== undefined &&
+    value === lastFieldCard.rawValue
+  ) {
+    return fail(ACTION_BUG_FORBIDDEN, "Stack-Forbidden: stacking the same value is forbidden");
+  }
+  return ok();
+}
+
 function validatePlayCard(
   game: Game,
   action: PlayCardAction,
@@ -69,6 +90,28 @@ function validatePlayCard(
 
   if (game.phase === "showdown") {
     return fail(ACTION_INVALID_PHASE, "Use showdown_submit during the showdown phase");
+  }
+
+  // Raid: turn comes from raidState; the boss attacks players, players attack the boss
+  if (game.phase === "raid") {
+    const rs = game.raidState;
+    if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
+    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+      return fail(ACTION_NOT_YOUR_TURN);
+    }
+    const hand = game.hands[actorId] ?? [];
+    if (!hand.includes(action.cardId)) {
+      return fail(ACTION_INVALID_CARD, `Card ${action.cardId} not in hand`);
+    }
+    if (actorId === rs.bossPlayerId) {
+      const target = action.targetId;
+      if (!target || target === "boss" || (rs.playerHPs[target] ?? 0) <= 0) {
+        return fail(ACTION_INVALID_CARD, "Boss must target a surviving player");
+      }
+    } else if (action.targetId && action.targetId !== "boss") {
+      return fail(ACTION_INVALID_CARD, "Players can only target the boss");
+    }
+    return checkForbiddenBugs(game, action);
   }
 
   if (!isCurrentTurnPlayer(game, actorId)) {
@@ -98,24 +141,8 @@ function validatePlayCard(
     return fail(arithmeticCheck.errorCode ?? ACTION_INVALID_CARD);
   }
 
-  // Bug constraint: Odd-Forbidden (odd cards are forbidden)
-  if (game.residualBugs.includes("Odd-Forbidden") && value % 2 !== 0) {
-    return fail(ACTION_BUG_FORBIDDEN, "Odd-Forbidden: odd cards are forbidden");
-  }
-
-  // Bug constraint: Even-Forbidden (even cards are forbidden)
-  if (game.residualBugs.includes("Even-Forbidden") && value % 2 === 0) {
-    return fail(ACTION_BUG_FORBIDDEN, "Even-Forbidden: even cards are forbidden");
-  }
-
-  // Bug constraint: Stack-Forbidden (same value as top of field is forbidden)
-  if (
-    game.residualBugs.includes("Stack-Forbidden") &&
-    lastFieldCard !== undefined &&
-    value === lastFieldCard.rawValue
-  ) {
-    return fail(ACTION_BUG_FORBIDDEN, "Stack-Forbidden: stacking the same value is forbidden");
-  }
+  const forbidden = checkForbiddenBugs(game, action);
+  if (!forbidden.valid) return forbidden;
 
   return ok();
 }
@@ -129,6 +156,26 @@ function validateDrawCard(game: Game, ctx: ValidateContext): ValidationResult {
 
   if (game.phase === "showdown") {
     return fail(ACTION_INVALID_PHASE, "Use showdown_submit during the showdown phase");
+  }
+
+  // Raid refill (手札補充): players only, on their raid turn, deck must have cards
+  if (game.phase === "raid") {
+    const rs = game.raidState;
+    if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
+    if (actorId === rs.bossPlayerId) {
+      return fail(ACTION_INVALID_PHASE, "The boss cannot refill");
+    }
+    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+      return fail(ACTION_NOT_YOUR_TURN);
+    }
+    if (game.deck.length === 0) {
+      return fail(ACTION_INVALID_CARD, "Deck is empty");
+    }
+    const hand = game.hands[actorId] ?? [];
+    if (hand.length >= ruleSet.initialConfig.initialHandSize) {
+      return fail(ACTION_HAND_FULL, `Hand is full (max ${ruleSet.initialConfig.initialHandSize})`);
+    }
+    return ok();
   }
 
   if (!isCurrentTurnPlayer(game, actorId)) {
@@ -158,6 +205,22 @@ function validateRemoveBug(
 
   if (!game.residualBugs.includes(action.bugId)) {
     return fail(ACTION_INVALID_CARD, `Bug ${action.bugId} is not active`);
+  }
+
+  // Raid: bug removal is one of the three turn actions — raid turn required,
+  // boss excluded. Bugs carried over from the previous game cannot be removed.
+  if (game.phase === "raid") {
+    const rs = game.raidState;
+    if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
+    if (actorId === rs.bossPlayerId) {
+      return fail(ACTION_INVALID_PHASE, "The boss cannot remove bugs");
+    }
+    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+      return fail(ACTION_NOT_YOUR_TURN);
+    }
+  }
+  if ((game.carriedBugs ?? []).includes(action.bugId)) {
+    return fail(ACTION_INVALID_CARD, "Residual bugs from the previous game cannot be removed");
   }
 
   const bugDef = ruleSet.bugs.find(b => b.id === action.bugId);
