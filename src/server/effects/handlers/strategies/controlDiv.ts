@@ -21,7 +21,9 @@ export function controlDiv(game: Game, ctx: EffectContext): GamePatch {
 
   const lastField = game.field[lastIndex];
   if (lastField.cardId !== triggerCard.cardId) return {};
-  if (lastField.operation === "div") return {}; // No change needed
+  // yaml: change_operation from=mul to=div — only mul cards may be flipped
+  // (mul's play-time constraint equals div's, so validity is preserved)
+  if (lastField.operation !== "mul") return {};
 
   const newOp = "div" as const;
   const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
@@ -30,19 +32,11 @@ export function controlDiv(game: Game, ctx: EffectContext): GamePatch {
   const updatedField = [...game.field];
   updatedField[lastIndex] = { ...lastField, operation: newOp };
 
-  const currentCounts = game.usedStrategyCounts[actorId] ?? {};
-  const updatedCounts = {
-    ...game.usedStrategyCounts,
-    [actorId]: {
-      ...currentCounts,
-      "Control-Div": (currentCounts["Control-Div"] ?? 0) + 1,
-    },
-  };
+  // usedStrategyCounts is incremented centrally by EffectResolver
 
   return {
     field:              updatedField,
     setNumber:          newSetNumber,
-    usedStrategyCounts: updatedCounts,
     appendEvents: [{
       id:        newEventId(),
       timestamp: Date.now(),

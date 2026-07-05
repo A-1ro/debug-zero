@@ -18,7 +18,8 @@ export function controlSub(game: Game, ctx: EffectContext): GamePatch {
 
   const lastField = game.field[lastIndex];
   if (lastField.cardId !== triggerCard.cardId) return {};
-  if (lastField.operation === "sub") return {}; // No change needed
+  // yaml: change_operation from=add to=sub — only add cards may be flipped
+  if (lastField.operation !== "add") return {};
 
   const newOp = "sub" as const;
   const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
@@ -27,19 +28,11 @@ export function controlSub(game: Game, ctx: EffectContext): GamePatch {
   const updatedField = [...game.field];
   updatedField[lastIndex] = { ...lastField, operation: newOp };
 
-  const currentCounts = game.usedStrategyCounts[actorId] ?? {};
-  const updatedCounts = {
-    ...game.usedStrategyCounts,
-    [actorId]: {
-      ...currentCounts,
-      "Control-Sub": (currentCounts["Control-Sub"] ?? 0) + 1,
-    },
-  };
+  // usedStrategyCounts is incremented centrally by EffectResolver
 
   return {
     field:              updatedField,
     setNumber:          newSetNumber,
-    usedStrategyCounts: updatedCounts,
     appendEvents: [{
       id:        newEventId(),
       timestamp: Date.now(),

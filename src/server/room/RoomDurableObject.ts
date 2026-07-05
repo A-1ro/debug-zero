@@ -450,6 +450,7 @@ export class RoomDurableObject implements DurableObject {
       players: strategies.value,
       ruleSetId: "basic",
       ruleSet,
+      effectResolver: this.effectResolver,
     });
 
     if (!result.ok) {
