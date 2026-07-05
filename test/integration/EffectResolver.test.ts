@@ -166,6 +166,16 @@ class MemSessionStorage implements SessionStorage {
   async saveGame(g: Game): Promise<void> { this.games.set(g.id, g); }
 }
 
+// シャッフルを決定的にする擬似乱数（LCG）。Math.randomのままだと
+// 0カードが全て初期手札に配られて山札に残らない回があり、テストがフレークする
+function seededRng(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  };
+}
+
 describe("Zeroストラテジー（A6: on_game_start）", () => {
   it("ゲーム開始時に0カードが手札へ追加される", async () => {
     const service = new SessionService(new MemSessionStorage());
@@ -179,6 +189,7 @@ describe("Zeroストラテジー（A6: on_game_start）", () => {
       ruleSetId: "basic",
       ruleSet,
       effectResolver: resolver,
+      rng: seededRng(42),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -201,6 +212,7 @@ describe("Zeroストラテジー（A6: on_game_start）", () => {
       ruleSetId: "basic",
       ruleSet,
       effectResolver: resolver,
+      rng: seededRng(42),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
