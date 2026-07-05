@@ -35,10 +35,13 @@ import type {
 import basicYaml from "../../../rules/basic.yaml?raw";
 import {
   ROOM_NOT_FOUND,
+  ROOM_ALREADY_STARTED,
   ROOM_HOST_REQUIRED,
   SESSION_STRATEGY_NOT_SELECTED,
   WS_DUPLICATE_MESSAGE,
+  WS_AUTH_FAILED,
 } from "../../shared/constants";
+import { sanitizeRoomFor, maskSessionPlayers } from "./sanitize";
 
 // ============================================================
 // DO-backed storage implementations
@@ -142,6 +145,22 @@ export class RoomDurableObject implements DurableObject {
 
     // Register message handlers
     this.registerHandlers();
+
+    // senderId spoofing guard: except for the initial join, the senderId must
+    // match the playerId bound to this connection. Without this any client
+    // could act (play cards, leave, ready) as any other player.
+    this.router.setAuthorizer((message, connectionId) => {
+      if (message.type === "client:join_room") return { ok: true };
+      const bound = this.connectionManager.getBoundPlayerId(connectionId);
+      if (!bound || bound !== message.senderId) {
+        return {
+          ok: false,
+          errorCode: WS_AUTH_FAILED,
+          detail: "senderId does not match the connection's bound player",
+        };
+      }
+      return { ok: true };
+    });
 
     // Restore Hibernatable WebSocket connections after DO restart.
     // CF Workers may evict the DO from memory between messages; acceptWebSocket()
@@ -289,16 +308,25 @@ export class RoomDurableObject implements DurableObject {
       return;
     }
 
+    // Input validation: client-side maxLength is advisory only
+    const playerName = typeof payload.playerName === "string" ? payload.playerName.trim() : "";
+    if (!playerName || playerName.length > 20) {
+      this.sendErrorToConnection(connectionId, room?.id ?? "", "ROOM_INVALID_PLAYER_NAME",
+        "playerName must be 1-20 characters");
+      return;
+    }
+    const role = payload.role === "spectator" ? "spectator" : "player";
+
     const result = room
       ? this.roomService.joinRoom({
           roomId: room.id,
           playerId: message.senderId,
-          playerName: payload.playerName,
-          role: payload.role,
+          playerName,
+          role,
         })
       : this.roomService.createRoom({
           hostId: message.senderId,
-          hostName: payload.playerName,
+          hostName: playerName,
           ruleSetId: "basic",
         });
 
@@ -366,6 +394,15 @@ export class RoomDurableObject implements DurableObject {
     const room = await this.requireRoom(message.senderId);
     if (!room) return;
 
+    // The strategy must exist in the rule set — otherwise a session could
+    // start with an undefined strategy id
+    const ruleSet = this.ruleSetRegistry.get(room.ruleSetId);
+    if (!ruleSet.strategies.some((s) => s.id === payload.strategyId)) {
+      await this.sendError(message.senderId, "RULE_UNKNOWN_STRATEGY",
+        `strategy ${String(payload.strategyId)} is not defined in rule set ${room.ruleSetId}`, true);
+      return;
+    }
+
     const result = this.roomService.selectStrategy({
       roomId: room.id,
       playerId: message.senderId,
@@ -388,6 +425,13 @@ export class RoomDurableObject implements DurableObject {
 
     if (room.hostPlayerId !== message.senderId) {
       await this.sendError(message.senderId, ROOM_HOST_REQUIRED, undefined, true);
+      return;
+    }
+
+    // Double-start guard: a re-sent start_game must not create a fresh session
+    // (that would discard the running game and reset everyone's wins)
+    if (room.status === "in-session") {
+      await this.sendError(message.senderId, ROOM_ALREADY_STARTED, undefined, true);
       return;
     }
 
@@ -417,18 +461,22 @@ export class RoomDurableObject implements DurableObject {
     const updatedRoom: Room = { ...room, status: "in-session", sessionId };
     await this.saveRoom(updatedRoom);
 
-    // Broadcast session_started to all
-    await this.broadcast({
-      id: crypto.randomUUID() as MessageId,
-      type: "server:session_started",
-      roomId: room.id,
-      payload: {
-        sessionId,
-        players: session.players,
-        ruleSetId: "basic",
-      },
-      visibility: "all",
-    }, updatedRoom);
+    // session_started: per-player sends so each recipient only sees their own
+    // strategy id (others are masked until session end)
+    for (const player of updatedRoom.players) {
+      await this.broadcast({
+        id: crypto.randomUUID() as MessageId,
+        type: "server:session_started",
+        roomId: room.id,
+        payload: {
+          sessionId,
+          players: maskSessionPlayers(session.players, player.id),
+          ruleSetId: "basic",
+        },
+        visibility: "player",
+        targetPlayerId: player.id,
+      }, updatedRoom);
+    }
 
     // Broadcast game_started: hand counts to all, individual hands to each player
     const handCounts: Record<PlayerId, number> = {};
@@ -628,18 +676,23 @@ export class RoomDurableObject implements DurableObject {
 
     const updatedSession = sessionResult.ok ? sessionResult.value : session;
 
-    await this.broadcast({
-      id: crypto.randomUUID() as MessageId,
-      type: "server:game_ended",
-      roomId: room.id,
-      gameId: game.id,
-      payload: {
+    // game_ended: strategies stay masked while the session continues
+    // (session_ended below reveals them once the session is decided)
+    for (const player of room.players) {
+      await this.broadcast({
+        id: crypto.randomUUID() as MessageId,
+        type: "server:game_ended",
+        roomId: room.id,
         gameId: game.id,
-        winResult,
-        sessionPlayers: updatedSession.players,
-      },
-      visibility: "all",
-    }, room);
+        payload: {
+          gameId: game.id,
+          winResult,
+          sessionPlayers: maskSessionPlayers(updatedSession.players, player.id),
+        },
+        visibility: "player",
+        targetPlayerId: player.id,
+      }, room);
+    }
 
     if (updatedSession.status === "finished") {
       await this.broadcast({
@@ -692,7 +745,7 @@ export class RoomDurableObject implements DurableObject {
         id:            crypto.randomUUID() as MessageId,
         type:          "server:room_updated",
         roomId:        room.id,
-        payload:       { room },
+        payload:       { room: sanitizeRoomFor(room, playerId) },
         visibility:    "player",
         targetPlayerId: playerId,
       },
@@ -730,13 +783,18 @@ export class RoomDurableObject implements DurableObject {
       events: game.events,
     };
 
+    // Strategies are revealed only after the session has finished
+    const syncSession: Session = session.status === "finished"
+      ? session
+      : { ...session, players: maskSessionPlayers(session.players, playerId) };
+
     this.broadcaster.send(
       {
         id: crypto.randomUUID() as MessageId,
         type: "server:state_sync",
         roomId: room.id,
         gameId: game.id,
-        payload: { room, session, game: gameView },
+        payload: { room: sanitizeRoomFor(room, playerId), session: syncSession, game: gameView },
         visibility: "player",
         targetPlayerId: playerId,
       },
@@ -774,16 +832,21 @@ export class RoomDurableObject implements DurableObject {
   }
 
   private async broadcastRoomUpdated(room: Room): Promise<void> {
-    await this.broadcast(
-      {
-        id: crypto.randomUUID() as MessageId,
-        type: "server:room_updated",
-        roomId: room.id,
-        payload: { room },
-        visibility: "all",
-      },
-      room
-    );
+    // Per-player sends: each recipient sees only their own strategy id;
+    // everyone else's is masked (strategy ids are secret until session end).
+    for (const player of room.players) {
+      await this.broadcast(
+        {
+          id: crypto.randomUUID() as MessageId,
+          type: "server:room_updated",
+          roomId: room.id,
+          payload: { room: sanitizeRoomFor(room, player.id) },
+          visibility: "player",
+          targetPlayerId: player.id,
+        },
+        room
+      );
+    }
   }
 
   /** Send a fatal error directly to a not-yet-bound connection, then close it. */
