@@ -14,6 +14,8 @@ import type {
   RoomId,
 } from "../../shared/types/domain";
 import type { RuleSet } from "../../shared/types/rules";
+import type { EffectResolver } from "../effects/EffectResolver";
+import { applyPatch } from "../game/GameEngine";
 import {
   SESSION_INVALID_STRATEGY,
   SESSION_NOT_IN_PROGRESS,
@@ -145,6 +147,32 @@ function determineTurnOrder(
  * Checks whether the Zero strategy is effectively disabled.
  * Per rules: Zero is invalidated if 2 or more players select it.
  */
+/**
+ * Resolve on_game_start effects (e.g. Zero strategy adding a 0-card to hand).
+ * Players whose strategy is invalidated by an exclusion condition are skipped.
+ * No-op when effectResolver is not provided (kept optional for tests).
+ */
+function applyGameStartEffects(
+  game: Game,
+  sessionPlayers: SessionPlayer[],
+  ruleSet: RuleSet,
+  effectResolver?: EffectResolver
+): Game {
+  if (!effectResolver) return game;
+  const invalidated = new Set(getInvalidatedStrategies(sessionPlayers, ruleSet));
+  const active: Record<PlayerId, StrategyId> = {};
+  for (const sp of sessionPlayers) {
+    if (!invalidated.has(sp.strategyId)) active[sp.playerId] = sp.strategyId;
+  }
+  const patch = effectResolver.resolve(
+    game,
+    "on_game_start",
+    { actorId: "system" as PlayerId, ruleSet },
+    active
+  );
+  return applyPatch(game, patch);
+}
+
 function getInvalidatedStrategies(
   sessionPlayers: SessionPlayer[],
   ruleSet: RuleSet
@@ -285,8 +313,9 @@ export class SessionService {
     ruleSetId: string;
     ruleSet: RuleSet;
     rng?: () => number;
+    effectResolver?: EffectResolver;
   }): Promise<SessionResult<{ session: Session; game: Game }>> {
-    const { roomId, sessionId, players, ruleSetId, ruleSet, rng = Math.random } = params;
+    const { roomId, sessionId, players, ruleSetId, ruleSet, rng = Math.random, effectResolver } = params;
 
     // Validate all strategies exist
     const validStrategyIds = new Set(ruleSet.strategies.map((s) => s.id));
@@ -313,14 +342,19 @@ export class SessionService {
       winnerId: undefined,
     };
 
-    const game = initializeGame({
-      sessionId,
-      gameIndex: 1,
+    const game = applyGameStartEffects(
+      initializeGame({
+        sessionId,
+        gameIndex: 1,
+        sessionPlayers,
+        residualBugs: [],
+        ruleSet,
+        rng,
+      }),
       sessionPlayers,
-      residualBugs: [],
       ruleSet,
-      rng,
-    });
+      effectResolver
+    );
 
     session.gameIds.push(game.id);
 
@@ -339,8 +373,9 @@ export class SessionService {
     finishedGame: Game;
     ruleSet: RuleSet;
     rng?: () => number;
+    effectResolver?: EffectResolver;
   }): Promise<SessionResult<{ session: Session; game: Game }>> {
-    const { sessionId, finishedGame, ruleSet, rng = Math.random } = params;
+    const { sessionId, finishedGame, ruleSet, rng = Math.random, effectResolver } = params;
 
     const session = await this.storage.getSession(sessionId);
     if (!session) {
@@ -356,14 +391,19 @@ export class SessionService {
     const nextCurrentIndex = session.currentGameIndex + 1; // 0-based session tracker
     const residualBugs = finishedGame.residualBugs ?? [];
 
-    const game = initializeGame({
-      sessionId,
-      gameIndex: nextGameIndex,
-      sessionPlayers: session.players,
-      residualBugs,
+    const game = applyGameStartEffects(
+      initializeGame({
+        sessionId,
+        gameIndex: nextGameIndex,
+        sessionPlayers: session.players,
+        residualBugs,
+        ruleSet,
+        rng,
+      }),
+      session.players,
       ruleSet,
-      rng,
-    });
+      effectResolver
+    );
 
     const updatedSession: Session = {
       ...session,

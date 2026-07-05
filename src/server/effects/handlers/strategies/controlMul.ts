@@ -20,7 +20,9 @@ export function controlMul(game: Game, ctx: EffectContext): GamePatch {
 
   const lastField = game.field[lastIndex];
   if (lastField.cardId !== triggerCard.cardId) return {};
-  if (lastField.operation === "mul") return {}; // No change needed
+  // yaml: change_operation from=div to=mul — only div cards may be flipped
+  // (div's play-time constraint equals mul's, so validity is preserved)
+  if (lastField.operation !== "div") return {};
 
   const newOp = "mul" as const;
   const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
@@ -29,19 +31,11 @@ export function controlMul(game: Game, ctx: EffectContext): GamePatch {
   const updatedField = [...game.field];
   updatedField[lastIndex] = { ...lastField, operation: newOp };
 
-  const currentCounts = game.usedStrategyCounts[actorId] ?? {};
-  const updatedCounts = {
-    ...game.usedStrategyCounts,
-    [actorId]: {
-      ...currentCounts,
-      "Control-Mul": (currentCounts["Control-Mul"] ?? 0) + 1,
-    },
-  };
+  // usedStrategyCounts is incremented centrally by EffectResolver
 
   return {
     field:              updatedField,
     setNumber:          newSetNumber,
-    usedStrategyCounts: updatedCounts,
     appendEvents: [{
       id:        newEventId(),
       timestamp: Date.now(),

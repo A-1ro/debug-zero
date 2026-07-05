@@ -11,6 +11,7 @@ import type { EffectContext } from "../../shared/types/effects";
 import type { TriggerCondition } from "../../shared/types/rules";
 import type { EffectRegistry } from "./EffectRegistry";
 import { RULE_EFFECT_UNREGISTERED } from "../../shared/constants";
+import { applyPatch } from "../game/GameEngine";
 
 // ============================================================
 // Forbidden bug → blocked strategy mapping
@@ -113,7 +114,18 @@ export class EffectResolver {
     playerStrategies: Record<PlayerId, StrategyId>,
   ): GamePatch {
     let accumulated: GamePatch = {};
+    // Effects must see the results of previously-resolved effects in the same
+    // resolution pass — otherwise two patches computed from the same base state
+    // overwrite each other on merge (e.g. TrickStar's removal being undone by
+    // a Control-* operation change).
+    let current = game;
     const invalidatedEvents: EventLog[] = [];
+
+    const apply = (patch: GamePatch): void => {
+      if (Object.keys(patch).length === 0) return;
+      accumulated = mergePatch(accumulated, patch);
+      current = applyPatch(current, patch);
+    };
 
     // ── Strategy effects ──────────────────────────────────────
     for (const [playerId, strategyId] of Object.entries(playerStrategies)) {
@@ -123,8 +135,14 @@ export class EffectResolver {
       if (!strategyDef) continue;
       if (strategyDef.effect.trigger.type !== triggerType) continue;
 
+      // Usage limit (e.g. Control/Hack/TrickStar are once per game).
+      // Counted centrally here — handlers must not touch usedStrategyCounts.
+      const limit = strategyDef.effect.usageLimit;
+      const used = current.usedStrategyCounts[playerId]?.[strategyId] ?? 0;
+      if (limit != null && used >= limit) continue;
+
       // Check Forbidden bugs — skip and record invalidation event
-      if (isForbiddenStrategy(strategyId, game.residualBugs)) {
+      if (isForbiddenStrategy(strategyId, current.residualBugs)) {
         invalidatedEvents.push({
           id:        newEventId(),
           timestamp: Date.now(),
@@ -154,24 +172,39 @@ export class EffectResolver {
 
       // Execute handler with the activating player as actorId
       const handlerCtx: EffectContext = { ...ctx, actorId: playerId };
-      const patch = handler(game, handlerCtx);
-      accumulated = mergePatch(accumulated, patch);
+      const patch = handler(current, handlerCtx);
+      if (Object.keys(patch).length === 0) continue; // no-op — does not consume usage
+
+      apply(patch);
+      // Central usage counting (only when the effect actually did something)
+      apply({
+        usedStrategyCounts: {
+          ...current.usedStrategyCounts,
+          [playerId]: {
+            ...(current.usedStrategyCounts[playerId] ?? {}),
+            [strategyId]: used + 1,
+          },
+        },
+      });
     }
 
     // ── Bug effects (non-Forbidden bugs only) ─────────────────
-    for (const bugId of game.residualBugs) {
+    for (const bugId of current.residualBugs) {
       // Forbidden-type bugs are handled in ActionValidator / strategy suppression above
       if (bugId in FORBIDDEN_BUG_STRATEGY_MAP) continue;
 
       const bugDef = ctx.ruleSet.bugs.find(b => b.id === bugId);
       if (!bugDef) continue;
-      if (bugDef.effect.trigger.type !== triggerType) continue;
+      // "always" bugs (e.g. Value-Corruption) fire once per played card;
+      // matching them on every trigger type would double-fire per action
+      const t = bugDef.effect.trigger.type;
+      const matches = t === triggerType || (t === "always" && triggerType === "on_card_played");
+      if (!matches) continue;
 
       const handler = this.registry.get(bugDef.effect.id);
       if (!handler) continue; // Unregistered bug handler — skip silently
 
-      const patch = handler(game, ctx);
-      accumulated = mergePatch(accumulated, patch);
+      apply(handler(current, ctx));
     }
 
     // Append any invalidation events

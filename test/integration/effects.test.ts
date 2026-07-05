@@ -133,19 +133,20 @@ describe("controlAdd handler", () => {
     expect(patch.field![0].operation).toBe("add");
     // undo sub(7+3=10), re-apply add(10+3=13)
     expect(patch.setNumber).toBe(13);
-    expect(patch.usedStrategyCounts![P2]["Control-Add"]).toBe(1);
+    // usedStrategyCounts はハンドラでは触らない（EffectResolverが中央で加算する）
+    expect(patch.usedStrategyCounts).toBeUndefined();
     expect(patch.appendEvents!.some(e => e.type === "operation_changed")).toBe(true);
   });
 
-  it("usedStrategyCounts が累積される（2回目は 2 になる）", () => {
-    const card = makeFieldCard(3, "sub", P1);
-    const game = makeGameWithLastCard(7, card, {
-      usedStrategyCounts: { [P1]: {}, [P2]: { "Control-Add": 1 } },
+  it("mul カードは対象外（yamlの from=sub 制約）: no-op", () => {
+    const card = makeFieldCard(3, "mul", P1);
+    const game = makeGameWithLastCard(30, card, {
+      usedStrategyCounts: { [P1]: {}, [P2]: {} },
     });
 
     const patch = controlAdd(game, makeCtx(P2, card));
 
-    expect(patch.usedStrategyCounts![P2]["Control-Add"]).toBe(2);
+    expect(patch).toEqual({});
   });
 
   it("operation がすでに add の場合: no-op", () => {
