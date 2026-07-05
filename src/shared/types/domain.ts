@@ -119,8 +119,21 @@ export interface Game {
   resetCount:          number;
   residualBugs:        BugId[];
   raidState?:          RaidState;
+  showdownState?:      ShowdownState;
   winnerId?:           PlayerId;
+  winnerIds?:          PlayerId[];
   events:              EventLog[];
+}
+
+// Showdown（決戦フェーズ）: 各プレイヤーが手札から2枚以下＋演算で値を作り、
+// 全員提出後にセット数へ最接近のプレイヤーが勝つ（同値→枚数少ない方→全員勝利）
+export interface ShowdownSubmission {
+  cardIds: CardId[];      // 1〜2枚
+  value:   number;        // 提出値（2枚時は operation を適用した結果）
+}
+
+export interface ShowdownState {
+  submissions: Record<PlayerId, ShowdownSubmission>;
 }
 
 // ============================================================
@@ -149,6 +162,12 @@ export interface ResetOrRaidAction {
   choice: "reset" | "raid";
 }
 
+export interface ShowdownSubmitAction {
+  type:       "showdown_submit";
+  cardIds:    CardId[];     // 1〜2枚（手札から）
+  operation?: Operation;    // 2枚のとき必須: value = op(card1, card2)
+}
+
 export interface SelectStrategyAction {
   type:       "select_strategy";
   strategyId: StrategyId;
@@ -159,6 +178,7 @@ export type Action =
   | RemoveBugAction
   | DrawCardAction
   | ResetOrRaidAction
+  | ShowdownSubmitAction
   | SelectStrategyAction;
 
 // ============================================================
@@ -208,7 +228,9 @@ export interface GamePatch {
   currentTurnIndex?:     number;
   resetCount?:           number;
   raidState?:            RaidState | null;
+  showdownState?:        ShowdownState;
   winnerId?:             PlayerId;
+  winnerIds?:            PlayerId[];
   residualBugs?:         BugId[];
   appendEvents?:         EventLog[];
 }
@@ -228,6 +250,7 @@ export type EventType =
   | "bug_removed"
   | "bug_residual"
   | "phase_changed"
+  | "showdown_submitted"
   | "game_reset"
   | "raid_started"
   | "raid_round_started"

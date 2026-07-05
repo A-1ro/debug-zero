@@ -251,9 +251,10 @@ describe("Non-Aggro player going negative — game continues", () => {
   });
 
   it("非Aggroが負数にした後、次のプレイヤーがプレイできる", () => {
+    // deckを2枚にして、P1のプレイ後に山札切れ→showdown遷移しないようにする
     const game = makeGame({
       setNumber: 2,
-      deck:  ["9-001"],
+      deck:  ["9-001", "8-001"],
       hands: { [P1]: ["3-001"], [P2]: ["4-001"] },
     });
     const strategies = { [P1]: "None", [P2]: "None" };

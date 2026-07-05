@@ -33,6 +33,8 @@ export function GameBoard({
   onResetOrRaid,
 }: Props) {
   const [selectedCardId, setSelectedCardId] = useState<CardId | null>(null);
+  // Showdown: up to 2 cards
+  const [selectedCardIds, setSelectedCardIds] = useState<CardId[]>([]);
   const [resetOrRaidPending, setResetOrRaidPending] = useState(false);
   const [activeTab, setActiveTab] = useState<"field" | "players" | "log">("field");
   // Auto-switch to FIELD tab when it's my turn
@@ -40,6 +42,11 @@ export function GameBoard({
 
   const isMyTurn = game != null
     && game.turnOrder[game.currentTurnIndex] === playerId;
+
+  const isShowdown = game?.phase === "showdown";
+  // Showdown has no turn order — everyone submits once
+  const hasSubmitted = isShowdown && game != null
+    && game.events.some((e) => e.type === "showdown_submitted" && e.actorId === playerId);
 
   // Detect 0-value card played by ME to trigger ResetOrRaid UI.
   // Only check field.length changes — not isMyTurn — to avoid re-triggering
@@ -56,7 +63,19 @@ export function GameBoard({
   // Clear selection when turn changes or game phase changes
   useEffect(() => {
     setSelectedCardId(null);
+    setSelectedCardIds([]);
   }, [game?.currentTurnIndex, game?.phase]);
+
+  // Showdown: toggle selection, max 2 cards
+  const handleShowdownSelect = useCallback((cardId: CardId) => {
+    setSelectedCardIds((prev) =>
+      prev.includes(cardId)
+        ? prev.filter((id) => id !== cardId)
+        : prev.length >= 2
+          ? prev
+          : [...prev, cardId]
+    );
+  }, []);
 
   // Auto-switch to FIELD tab when it becomes my turn (mobile/tablet only)
   useEffect(() => {
@@ -183,8 +202,9 @@ export function GameBoard({
                 <HandDisplay
                   hand={game.hand}
                   selectedCardId={selectedCardId}
-                  isMyTurn={isMyTurn}
-                  onSelect={setSelectedCardId}
+                  selectedCardIds={isShowdown ? selectedCardIds : undefined}
+                  isMyTurn={isShowdown ? !hasSubmitted : isMyTurn}
+                  onSelect={isShowdown ? handleShowdownSelect : setSelectedCardId}
                 />
                 <ActionPanel
                   hand={game.hand}
@@ -192,6 +212,8 @@ export function GameBoard({
                   isMyTurn={isMyTurn}
                   resetOrRaidPending={resetOrRaidPending}
                   selectedCardId={selectedCardId}
+                  selectedCardIds={selectedCardIds}
+                  hasSubmitted={hasSubmitted}
                   lastFieldRawValue={game.field.at(-1)?.rawValue}
                   room={room}
                   playerId={playerId}

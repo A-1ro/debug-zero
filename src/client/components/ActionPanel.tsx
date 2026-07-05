@@ -8,6 +8,10 @@ interface Props {
   isMyTurn:            boolean;
   resetOrRaidPending:  boolean;
   selectedCardId:      CardId | null;
+  /** Showdown: up to 2 selected cards */
+  selectedCardIds?:    CardId[];
+  /** Showdown: this player already submitted */
+  hasSubmitted?:       boolean;
   lastFieldRawValue?:  number;
   room:                Room | null;
   playerId:            PlayerId;
@@ -31,6 +35,8 @@ export function ActionPanel({
   isMyTurn,
   resetOrRaidPending,
   selectedCardId,
+  selectedCardIds = [],
+  hasSubmitted = false,
   lastFieldRawValue,
   room,
   playerId,
@@ -69,6 +75,76 @@ export function ActionPanel({
       setSelectedTarget(isBossTurn ? "" as PlayerId : "boss");
     }
   }, [isBossTurn, phase]);
+
+  // Showdown: no turn order — every surviving player submits 1-2 cards + operation.
+  // Placed before the isMyTurn guard because isMyTurn is meaningless here.
+  if (phase === "showdown") {
+    if (hasSubmitted) {
+      return (
+        <div className={s.container}>
+          <div className={s.hintText}>SUBMITTED — waiting for other players...</div>
+        </div>
+      );
+    }
+    const values = selectedCardIds.map((id) => parseInt(id.split("-")[0], 10));
+    const needsOp = selectedCardIds.length === 2;
+    const divByZero = needsOp && selectedOp === "div" && values[1] === 0;
+    const preview = !needsOp
+      ? values[0]
+      : selectedOp === "add" ? values[0] + values[1]
+      : selectedOp === "sub" ? values[0] - values[1]
+      : selectedOp === "mul" ? values[0] * values[1]
+      : values[1] === 0 ? NaN : Math.ceil(values[0] / values[1]);
+    const canSubmit = selectedCardIds.length >= 1 && !divByZero;
+
+    return (
+      <div className={s.container}>
+        <div className={s.hintText}>
+          SHOWDOWN — pick 1-2 cards{needsOp ? " + operation" : ""}
+          {selectedCardIds.length > 0 && !Number.isNaN(preview) && ` (value: ${preview})`}
+        </div>
+        {needsOp && (
+          <div className={s.opsRow}>
+            {OPS.map(({ op, symbol }) => {
+              const disabled = op === "div" && values[1] === 0;
+              return (
+                <button
+                  key={op}
+                  type="button"
+                  className={[
+                    s.opBtn,
+                    selectedOp === op && !disabled ? s.opBtnSelected : "",
+                    disabled ? s.opBtnDisabled : "",
+                  ].join(" ")}
+                  disabled={disabled}
+                  onClick={() => !disabled && setSelectedOp(op)}
+                >
+                  {symbol}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className={s.actionsRow}>
+          <button
+            type="button"
+            className={`${s.btn} ${s.btnPlay}`}
+            disabled={!canSubmit}
+            onClick={() => {
+              if (!canSubmit) return;
+              onAction({
+                type:    "showdown_submit",
+                cardIds: selectedCardIds,
+                ...(needsOp ? { operation: selectedOp } : {}),
+              });
+            }}
+          >
+            ▶ SUBMIT
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!isMyTurn) {
     return (
@@ -149,28 +225,6 @@ export function ActionPanel({
             }}
           >
             ▶ ATTACK
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Showdown phase — no operator selection
-  if (phase === "showdown") {
-    return (
-      <div className={s.container}>
-        <div className={s.hintText}>SHOWDOWN — play your best card</div>
-        <div className={s.actionsRow}>
-          <button
-            type="button"
-            className={`${s.btn} ${s.btnPlay}`}
-            disabled={!selectedCardId}
-            onClick={() => {
-              if (!selectedCardId) return;
-              onAction({ type: "play_card", cardId: selectedCardId, operation: "add" });
-            }}
-          >
-            ▶ PLAY
           </button>
         </div>
       </div>

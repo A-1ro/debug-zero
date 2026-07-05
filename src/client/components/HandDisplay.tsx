@@ -4,18 +4,22 @@ import s from "./HandDisplay.module.css";
 interface Props {
   hand:            CardId[];
   selectedCardId:  CardId | null;
+  /** Showdown: multiple selection (up to 2). Takes precedence over selectedCardId. */
+  selectedCardIds?: CardId[];
   isMyTurn:        boolean;
   onSelect:        (cardId: CardId) => void;
 }
 
-export function HandDisplay({ hand, selectedCardId, isMyTurn, onSelect }: Props) {
+export function HandDisplay({ hand, selectedCardId, selectedCardIds, isMyTurn, onSelect }: Props) {
   return (
     <div className={s.container}>
       <div className={s.label}>Your Hand ({hand.length})</div>
       <div className={s.cardRow}>
         {hand.map((cardId, i) => {
           const value    = parseInt(cardId.split("-")[0], 10);
-          const isSelected = cardId === selectedCardId;
+          const isSelected = selectedCardIds
+            ? selectedCardIds.includes(cardId)
+            : cardId === selectedCardId;
           return (
             <div
               key={`${cardId}-${i}`}
