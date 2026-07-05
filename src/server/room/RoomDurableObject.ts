@@ -270,6 +270,21 @@ export class RoomDurableObject implements DurableObject {
         this.connectionManager.bind(message.senderId, connectionId);
       }
       this.updateWsAttachment(connectionId, message.senderId);
+      // Reconnect restores the player's connection status; without this the
+      // player stays "disconnected" for everyone else forever.
+      const me = room.players.find((p) => p.id === message.senderId);
+      if (me && me.connectionStatus !== "connected") {
+        const restoredRoom: Room = {
+          ...room,
+          players: room.players.map((p) =>
+            p.id === message.senderId ? { ...p, connectionStatus: "connected" as const } : p
+          ),
+        };
+        await this.saveRoom(restoredRoom);
+        await this.broadcastRoomUpdated(restoredRoom);
+        await this.sendStateSync(message.senderId, restoredRoom);
+        return;
+      }
       await this.sendStateSync(message.senderId, room);
       return;
     }
@@ -288,7 +303,10 @@ export class RoomDurableObject implements DurableObject {
         });
 
     if (!result.ok) {
-      await this.sendError(message.senderId, result.errorCode, result.detail, false);
+      // The connection is not bound to a playerId yet, so Broadcaster cannot
+      // reach it — send the error straight to the raw socket and close it,
+      // otherwise a rejected join (e.g. ROOM_FULL) hangs on "CONNECTING..." forever.
+      this.sendErrorToConnection(connectionId, room?.id ?? "", result.errorCode, result.detail);
       return;
     }
 
@@ -508,21 +526,29 @@ export class RoomDurableObject implements DurableObject {
         fieldCard: payload.action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
         fieldOverride: payload.action.type === "reset_or_raid" ? updatedGame.field : undefined,
         handCounts,
+        turnOrder: updatedGame.turnOrder,
+        currentTurnIndex: updatedGame.currentTurnIndex,
         events: newEvents,
       },
       visibility: "all",
     }, room);
 
-    // Send updated hand to actor
-    await this.broadcast({
-      id: crypto.randomUUID() as MessageId,
-      type: "server:hand_updated",
-      roomId: room.id,
-      gameId: updatedGame.id,
-      payload: { hand: updatedGame.hands[message.senderId] ?? [] },
-      visibility: "player",
-      targetPlayerId: message.senderId,
-    }, room);
+    // Send updated hands to every player whose hand changed (reset redeals all,
+    // Hack/TrickStar mutate other players' hands — not just the actor's).
+    // Patches keep unchanged hand arrays by reference, so reference compare works.
+    for (const [pid, hand] of Object.entries(updatedGame.hands)) {
+      const playerId = pid as PlayerId;
+      if (playerId !== message.senderId && game.hands[playerId] === hand) continue;
+      await this.broadcast({
+        id: crypto.randomUUID() as MessageId,
+        type: "server:hand_updated",
+        roomId: room.id,
+        gameId: updatedGame.id,
+        payload: { hand },
+        visibility: "player",
+        targetPlayerId: playerId,
+      }, room);
+    }
 
     // Check game end
     if (updatedGame.status === "finished" && updatedGame.winnerId) {
@@ -758,6 +784,30 @@ export class RoomDurableObject implements DurableObject {
       },
       room
     );
+  }
+
+  /** Send a fatal error directly to a not-yet-bound connection, then close it. */
+  private sendErrorToConnection(
+    connectionId: string,
+    roomId: string,
+    errorCode: string,
+    detail: string | undefined
+  ): void {
+    const ws = this.connectionManager.getWebSocket(connectionId);
+    if (!ws) return;
+    const message: ServerMessage = {
+      id: crypto.randomUUID() as MessageId,
+      type: "server:error",
+      roomId: roomId as Room["id"],
+      payload: { code: errorCode, message: errorCode, detail, recoverable: false },
+      visibility: "player",
+    };
+    try {
+      ws.send(JSON.stringify(message));
+      ws.close(4001, errorCode);
+    } catch {
+      // Connection already gone — nothing to do
+    }
   }
 
   private async sendError(
