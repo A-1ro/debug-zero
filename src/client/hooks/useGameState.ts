@@ -26,7 +26,8 @@ const initialState: GameState = {
 
 type Action = { type: "message"; payload: ServerMessage } | { type: "reset" };
 
-function reducer(state: GameState, action: Action): GameState {
+// Exported for unit tests (pure function — no React needed)
+export function reducer(state: GameState, action: Action): GameState {
   if (action.type === "reset") return initialState;
 
   const msg = action.payload;
@@ -84,10 +85,8 @@ function reducer(state: GameState, action: Action): GameState {
 
     case "server:action_result": {
       if (!state.game) return state;
-      const { deckCount, events, fieldCard, fieldOverride, newSetNumber, handCounts } = msg.payload;
-      // Advance turn index (wraps around turnOrder length)
-      const nextTurnIndex =
-        (state.game.currentTurnIndex + 1) % state.game.turnOrder.length;
+      const { deckCount, events, fieldCard, fieldOverride, newSetNumber, handCounts,
+              turnOrder, currentTurnIndex } = msg.payload;
       const newField = fieldOverride !== undefined
         ? fieldOverride
         : fieldCard
@@ -101,7 +100,10 @@ function reducer(state: GameState, action: Action): GameState {
           setNumber:        newSetNumber ?? state.game.setNumber,
           field:            newField,
           handCounts:       handCounts ?? state.game.handCounts,
-          currentTurnIndex: nextTurnIndex,
+          // Server is the single source of truth for turn state — never guess here
+          // (zero-card keeps the turn, reset rewinds to 0, eliminations shrink turnOrder)
+          turnOrder:        turnOrder ?? state.game.turnOrder,
+          currentTurnIndex: currentTurnIndex ?? state.game.currentTurnIndex,
           events:           [...state.game.events, ...events],
         },
       };

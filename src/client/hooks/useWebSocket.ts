@@ -104,9 +104,17 @@ export function useWebSocket(params: UseWebSocketParams) {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       wsRef.current = null;
       if (!activeRef.current) { setStatus("closed"); return; }
+
+      // Server-initiated terminal closes — do NOT reconnect:
+      //  4000 "reconnected": this playerId opened a newer connection (e.g. another tab)
+      //  4001 join rejected: ROOM_FULL etc. — retrying would loop forever
+      if (event.code === 4000 || event.code === 4001) {
+        setStatus("closed");
+        return;
+      }
 
       const delay = nextBackoff(attemptRef.current);
       attemptRef.current += 1;

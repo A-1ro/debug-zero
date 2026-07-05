@@ -141,6 +141,11 @@ export interface ActionResultPayload {
   raidHpChanges?:    Record<PlayerId | "boss", number>;
   deckCount:         number;
   handCounts?:       Record<PlayerId, number>;
+  // Authoritative turn state. Clients must render these values as-is instead of
+  // guessing (+1 wraps break on: zero-card plays that keep the turn, resets that
+  // rewind to 0, and eliminations that shrink turnOrder).
+  turnOrder:         PlayerId[];
+  currentTurnIndex:  number;
   events:            EventLog[];
 }
 
