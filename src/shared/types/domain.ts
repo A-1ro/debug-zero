@@ -118,6 +118,9 @@ export interface Game {
   currentTurnIndex:    number;
   resetCount:          number;
   residualBugs:        BugId[];
+  /** Bugs carried in from the previous game — they clear after this game
+   *  (only bugs newly spawned during this game's raid carry forward). */
+  carriedBugs?:        BugId[];
   raidState?:          RaidState;
   showdownState?:      ShowdownState;
   winnerId?:           PlayerId;

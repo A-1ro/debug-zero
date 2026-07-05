@@ -687,10 +687,13 @@ export class RoomDurableObject implements DurableObject {
       if (res.ok) updatedSession = res.value;
     }
 
-    // No winner at all (e.g. boss defeats every player in raid) — the boss
-    // takes the session; end it without an individual winner
+    // No winner at all = the raid boss defeated every player — the boss takes
+    // the whole session (session_win_boss)
     if (winners.length === 0) {
-      const ended = await this.sessionService.endSession({ sessionId: session.id });
+      const ended = await this.sessionService.endSession({
+        sessionId: session.id,
+        winnerId: game.raidState?.bossPlayerId,
+      });
       if (ended.ok) updatedSession = ended.value;
     }
 

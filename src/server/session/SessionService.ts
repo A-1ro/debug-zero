@@ -286,6 +286,8 @@ function initializeGame(params: {
     currentTurnIndex: 0,
     resetCount: 0,
     residualBugs,
+    // 前ゲームから引き継いだバグ: このゲーム中は除去不可、このゲーム限りでクリア
+    carriedBugs: [...residualBugs],
     raidState: undefined,
     winnerId: undefined,
     events,
@@ -389,7 +391,12 @@ export class SessionService {
     // After the session starts with game #1, gameIds.length = 1, so next game is #2.
     const nextGameIndex = session.gameIds.length + 1; // 1-based game number
     const nextCurrentIndex = session.currentGameIndex + 1; // 0-based session tracker
-    const residualBugs = finishedGame.residualBugs ?? [];
+    // Only bugs newly spawned in the finished game carry forward — bugs that
+    // were themselves carried in clear after one game (§11.5 bugResidual)
+    const carried = finishedGame.carriedBugs ?? [];
+    const residualBugs = (finishedGame.residualBugs ?? []).filter(
+      (bugId) => !carried.includes(bugId)
+    );
 
     const game = applyGameStartEffects(
       initializeGame({
