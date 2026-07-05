@@ -45,8 +45,14 @@ const SEEN_MSG_TTL_MS = 60_000;
  * Invocation (from RoomDurableObject.webSocketMessage):
  *   await router.route(rawText, connectionId);
  */
+export type MessageAuthorizer = (
+  message: ClientMessage,
+  connectionId: string
+) => { ok: true } | { ok: false; errorCode: string; detail?: string };
+
 export class MessageRouter {
   private handlers: Map<ClientMessageType, MessageHandler> = new Map();
+  private authorizer?: MessageAuthorizer;
 
   constructor(private readonly storage: SeenMsgStorage) {}
 
@@ -54,6 +60,15 @@ export class MessageRouter {
 
   on(type: ClientMessageType, handler: MessageHandler): void {
     this.handlers.set(type, handler);
+  }
+
+  /**
+   * Register an authorizer that runs after parsing and before dispatch.
+   * Used to verify that message.senderId matches the playerId bound to the
+   * connection — without this, any client can act as any player.
+   */
+  setAuthorizer(authorizer: MessageAuthorizer): void {
+    this.authorizer = authorizer;
   }
 
   // ── Routing ──────────────────────────────────────────────────
@@ -80,13 +95,20 @@ export class MessageRouter {
       return { ok: false, errorCode: "WS_INVALID_MESSAGE", detail: "Missing id or type" };
     }
 
-    // 2. Deduplicate (clean expired entries, then check)
+    // 2. Authorize (senderId spoofing guard) — before dedup so rejected
+    //    messages don't pollute seen_msgs
+    if (this.authorizer) {
+      const auth = this.authorizer(message, connectionId);
+      if (!auth.ok) return auth;
+    }
+
+    // 3. Deduplicate (clean expired entries, then check)
     const isDuplicate = await this.checkAndRegister(message.id);
     if (isDuplicate) {
       return { ok: false, errorCode: WS_DUPLICATE_MESSAGE };
     }
 
-    // 3. Dispatch
+    // 4. Dispatch
     const handler = this.handlers.get(message.type);
     if (!handler) {
       return { ok: false, errorCode: "WS_UNKNOWN_MESSAGE_TYPE", detail: message.type };

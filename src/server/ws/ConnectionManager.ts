@@ -82,6 +82,17 @@ export class ConnectionManager {
 
   // ── Lookups ──────────────────────────────────────────────────
 
+  /**
+   * Return the playerId currently bound to a connectionId, if any.
+   * Used to verify that message.senderId matches the connection's identity.
+   */
+  getBoundPlayerId(connectionId: string): PlayerId | undefined {
+    for (const [playerId, connId] of this.playerConnections) {
+      if (connId === connectionId) return playerId;
+    }
+    return undefined;
+  }
+
   getWebSocket(connectionId: string): WSLike | undefined {
     return this.connections.get(connectionId);
   }
