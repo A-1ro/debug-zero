@@ -12,6 +12,8 @@ import { EffectRegistry } from "../effects/EffectRegistry";
 import { EffectResolver } from "../effects/EffectResolver";
 import { registerAllHandlers } from "../effects/registerHandlers";
 import { applyAction, applyPatch } from "../game/GameEngine";
+import { autoActionFor } from "../game/AutoAction";
+import type { RuleSet } from "../../shared/types/rules";
 import type { EngineContext } from "../game/GameEngine";
 import type {
   Room,
@@ -241,6 +243,19 @@ export class RoomDurableObject implements DurableObject {
     await this.saveRoom(updatedRoom);
 
     await this.broadcastRoomUpdated(updatedRoom);
+
+    // If the disconnecting player is currently on the clock, don't make everyone
+    // wait the full timeout — bring the alarm forward so the auto-action fires soon.
+    if (updatedRoom.sessionId) {
+      const guard = await this.state.storage.get<{ player: PlayerId; deadline: number }>("turnGuard");
+      if (guard && guard.player === playerId) {
+        const soon = Date.now() + 3000;
+        if (soon < guard.deadline) {
+          await this.state.storage.put("turnGuard", { ...guard, deadline: soon });
+          await this.state.storage.setAlarm(soon);
+        }
+      }
+    }
   }
 
   // ── Handler registration ──────────────────────────────────────
@@ -518,6 +533,9 @@ export class RoomDurableObject implements DurableObject {
         targetPlayerId: player.playerId,
       }, room);
     }
+
+    // Start the first turn's timeout clock
+    await this.scheduleTurnAlarm(game, this.ruleSetRegistry.get("basic"));
   }
 
   private async handleAction(message: ClientMessage, _connectionId: string): Promise<void> {
@@ -532,6 +550,23 @@ export class RoomDurableObject implements DurableObject {
     const game = await this.sessionService.getGame(currentGameId);
     if (!game || game.status !== "in-progress") return;
 
+    await this.applyAndBroadcast(room, session, game, payload.action, message.senderId, {
+      onInvalid: (detail) => this.sendError(message.senderId, "ACTION_INVALID", detail, true),
+    });
+  }
+
+  /**
+   * Apply an action, persist, broadcast the result, and (re)arm the turn-timeout
+   * alarm. Shared by client-driven handleAction and the alarm-driven auto-action.
+   */
+  private async applyAndBroadcast(
+    room: Room,
+    session: Session,
+    game: Game,
+    action: ActionPayload["action"],
+    actorId: PlayerId,
+    opts: { onInvalid?: (detail: string) => Promise<void> } = {},
+  ): Promise<void> {
     const ruleSet = this.ruleSetRegistry.get("basic");
     const playerStrategies: Record<PlayerId, string> = {};
     for (const sp of session.players) {
@@ -539,7 +574,7 @@ export class RoomDurableObject implements DurableObject {
     }
 
     const ctx: EngineContext = {
-      actorId: message.senderId,
+      actorId,
       ruleSet,
       playerStrategies,
       effectResolver: this.effectResolver,
@@ -548,15 +583,16 @@ export class RoomDurableObject implements DurableObject {
     const priorEventCount = game.events.length;
     let updatedGame: Game;
     try {
-      updatedGame = applyAction(game, payload.action, ctx);
+      updatedGame = applyAction(game, action, ctx);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      await this.sendError(message.senderId, "ACTION_INVALID", detail, true);
+      if (opts.onInvalid) await opts.onInvalid(detail);
       return;
     }
 
     await this.sessionService.saveGame(updatedGame);
     const newEvents = updatedGame.events.slice(priorEventCount);
+    const message = { senderId: actorId, payload: { action } } as ClientMessage;
 
     // Broadcast action_result
     const handCounts: Record<PlayerId, number> = {};
@@ -570,13 +606,13 @@ export class RoomDurableObject implements DurableObject {
       roomId: room.id,
       gameId: updatedGame.id,
       payload: {
-        action: payload.action,
-        actorId: message.senderId,
+        action,
+        actorId,
         effectsApplied: [],
         newSetNumber: updatedGame.setNumber,
         deckCount: updatedGame.deck.length,
-        fieldCard: payload.action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
-        fieldOverride: payload.action.type === "reset_or_raid" ? updatedGame.field : undefined,
+        fieldCard: action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
+        fieldOverride: action.type === "reset_or_raid" ? updatedGame.field : undefined,
         handCounts,
         turnOrder: updatedGame.turnOrder,
         currentTurnIndex: updatedGame.currentTurnIndex,
@@ -604,6 +640,8 @@ export class RoomDurableObject implements DurableObject {
 
     // Check game end (winnerId may be absent — e.g. boss victory in raid)
     if (updatedGame.status === "finished") {
+      await this.state.storage.deleteAlarm();
+      await this.state.storage.delete("turnGuard");
       await this.handleGameEnd(room, session, updatedGame, ruleSet);
     }
 
@@ -617,12 +655,105 @@ export class RoomDurableObject implements DurableObject {
         payload: {
           from: game.phase,
           to: updatedGame.phase,
-          reason: payload.action.type === "reset_or_raid" ? "card_zero_played_raid" : "deck_empty",
+          reason: action.type === "reset_or_raid" ? "card_zero_played_raid" : "deck_empty",
           raidState: updatedGame.raidState,
         },
         visibility: "all",
       }, room);
     }
+
+    // (Re)arm the turn-timeout alarm for whoever is on the clock now.
+    // The 0-card reset/raid choice is deliberately not auto-resolved (it needs
+    // human intent), so no alarm is set while that choice is pending.
+    if (updatedGame.status === "in-progress") {
+      await this.scheduleTurnAlarm(updatedGame, ruleSet);
+    }
+  }
+
+  // ── Turn timeout (DO alarm) ───────────────────────────────────
+
+  private turnTimeoutMs(game: Game, ruleSet: RuleSet): number {
+    const t = ruleSet.timeouts ?? { normal: 45000, showdown: 30000, raid: 30000 };
+    return game.phase === "showdown" ? t.showdown : game.phase === "raid" ? t.raid : t.normal;
+  }
+
+  /** The player currently on the clock (raid uses raidState's rotation). */
+  private currentClockPlayer(game: Game): PlayerId | undefined {
+    if (game.phase === "raid" && game.raidState) {
+      return game.raidState.turnOrder[game.raidState.currentTurnIndex];
+    }
+    if (game.phase === "showdown") {
+      // showdown has no single turn — the first player who hasn't submitted
+      const submitted = new Set(
+        game.events.filter((e) => e.type === "showdown_submitted").map((e) => e.actorId),
+      );
+      return game.turnOrder.find((p) => !submitted.has(p));
+    }
+    return game.turnOrder[game.currentTurnIndex];
+  }
+
+  /** Store a guard token + set the DO alarm at the current turn's deadline. */
+  private async scheduleTurnAlarm(game: Game, ruleSet: RuleSet): Promise<void> {
+    const player = this.currentClockPlayer(game);
+    if (!player) { await this.state.storage.deleteAlarm(); return; }
+    const deadline = Date.now() + this.turnTimeoutMs(game, ruleSet);
+    // guard lets alarm() detect stale fires (turn already moved on)
+    await this.state.storage.put("turnGuard", {
+      gameId: game.id,
+      player,
+      phase: game.phase,
+      turnKey: this.turnKey(game),
+      deadline,
+    });
+    await this.state.storage.setAlarm(deadline);
+  }
+
+  /** A value that changes whenever the turn advances (for stale-alarm detection). */
+  private turnKey(game: Game): string {
+    if (game.phase === "raid" && game.raidState) {
+      return `raid:${game.raidState.roundIndex}:${game.raidState.currentTurnIndex}`;
+    }
+    if (game.phase === "showdown") {
+      const submitted = game.events.filter((e) => e.type === "showdown_submitted").length;
+      return `showdown:${submitted}`;
+    }
+    return `normal:${game.currentTurnIndex}:${game.field.length}`;
+  }
+
+  async alarm(): Promise<void> {
+    const guard = await this.state.storage.get<{
+      gameId: GameId; player: PlayerId; phase: string; turnKey: string; deadline: number;
+    }>("turnGuard");
+    if (!guard) return;
+
+    const room = await this.loadRoom();
+    if (!room || !room.sessionId) return;
+    const session = await this.sessionService.getSession(room.sessionId);
+    if (!session || !session.gameIds.length) return;
+    const currentGameId = session.gameIds[session.gameIds.length - 1];
+    const game = await this.sessionService.getGame(currentGameId);
+    if (!game || game.status !== "in-progress" || game.id !== guard.gameId) return;
+
+    // Stale fire: the turn already advanced since this alarm was armed → ignore
+    // (a fresh alarm was set by that action).
+    if (this.turnKey(game) !== guard.turnKey) return;
+
+    // Alarms can fire early — re-check the real deadline.
+    if (Date.now() < guard.deadline) {
+      await this.state.storage.setAlarm(guard.deadline);
+      return;
+    }
+
+    const ruleSet = this.ruleSetRegistry.get("basic");
+    const player = this.currentClockPlayer(game);
+    if (!player) return;
+
+    const auto = autoActionFor(game, player, ruleSet);
+    if (!auto) { await this.state.storage.delete("turnGuard"); return; }
+
+    // Record a turn_timeout marker, then run the auto action through the normal
+    // apply+broadcast path (which will re-arm the next turn's alarm).
+    await this.applyAndBroadcast(room, session, game, auto, player);
   }
 
   private async handleResetOrRaid(message: ClientMessage, _connectionId: string): Promise<void> {
