@@ -306,3 +306,9 @@ initialConfig:
   initialHandSize: 5
   initialHP: 10
   setNumberFormula: "gameIndex * 10"
+
+# 手番タイムアウト（ミリ秒）。超過するとサーバが代打で手を進める
+timeouts:
+  normal: 45000
+  showdown: 30000
+  raid: 30000

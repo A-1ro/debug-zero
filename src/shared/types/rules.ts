@@ -122,6 +122,13 @@ export interface InitialConfig {
 // RuleSet (top-level)
 // ============================================================
 
+/** 手番タイムアウト（ミリ秒）。未指定はデフォルト値を使う。 */
+export interface TurnTimeouts {
+  normal:   number;
+  showdown: number;
+  raid:     number;
+}
+
 export interface RuleSet {
   id:            RuleSetId;
   version:       string;
@@ -132,4 +139,5 @@ export interface RuleSet {
   phases:        PhaseDef[];
   winCondition:  WinConditionDef;
   initialConfig: InitialConfig;
+  timeouts?:     TurnTimeouts;
 }

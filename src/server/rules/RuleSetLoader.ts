@@ -1,5 +1,5 @@
 import { load as yamlLoad } from "js-yaml";
-import type { RuleSet, StrategyDef, BugDef, PhaseDef, DeckConfig, WinConditionDef, InitialConfig, EffectDef, TriggerCondition, TargetDef, EffectAction, ConstraintDef, RemovalCost, ExclusionCondition, TransitionCondition } from "../../shared/types/rules";
+import type { RuleSet, StrategyDef, BugDef, PhaseDef, DeckConfig, WinConditionDef, InitialConfig, TurnTimeouts, EffectDef, TriggerCondition, TargetDef, EffectAction, ConstraintDef, RemovalCost, ExclusionCondition, TransitionCondition } from "../../shared/types/rules";
 import { RULE_VALIDATION_FAILED, RULE_NOT_FOUND } from "../../shared/constants";
 import { globalRuleSetRegistry } from "./RuleSetRegistry";
 
@@ -149,6 +149,15 @@ function parseInitialConfig(raw: Raw): InitialConfig {
   };
 }
 
+function parseTimeouts(raw: Raw): TurnTimeouts | undefined {
+  if (raw == null) return undefined;
+  return {
+    normal:   assertPositiveInt(raw?.normal,   "timeouts.normal"),
+    showdown: assertPositiveInt(raw?.showdown, "timeouts.showdown"),
+    raid:     assertPositiveInt(raw?.raid,     "timeouts.raid"),
+  };
+}
+
 // ============================================================
 // merge helper (for extends)
 // ============================================================
@@ -208,6 +217,7 @@ export class RuleSetLoader {
       phases:        parsePhases(raw?.phases ?? []),
       winCondition:  parseWinCondition(raw?.winCondition),
       initialConfig: parseInitialConfig(raw?.initialConfig),
+      ...(parseTimeouts(raw?.timeouts) && { timeouts: parseTimeouts(raw?.timeouts) }),
     };
 
     // Handle extends
