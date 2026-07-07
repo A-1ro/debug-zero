@@ -24,6 +24,20 @@ export function getPlayerId(): PlayerId {
 }
 
 // ============================================================
+// Rebind token persistence (localStorage, one per room)
+// ============================================================
+
+const REBIND_TOKEN_PREFIX = "debug-zero:rebindToken:";
+
+function getRebindToken(roomId: RoomId): string | undefined {
+  return localStorage.getItem(REBIND_TOKEN_PREFIX + roomId) ?? undefined;
+}
+
+function saveRebindToken(roomId: RoomId, token: string): void {
+  localStorage.setItem(REBIND_TOKEN_PREFIX + roomId, token);
+}
+
+// ============================================================
 // Backoff config
 // ============================================================
 
@@ -90,14 +104,20 @@ export function useWebSocket(params: UseWebSocketParams) {
 
       // Send join_room immediately on connect — read latest values from refs
       sendRaw(ws, "client:join_room", {
-        playerName: playerNameRef.current,
-        role:       roleRef.current,
+        playerName:  playerNameRef.current,
+        role:        roleRef.current,
+        rebindToken: getRebindToken(roomId),
       }, roomId);
     };
 
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const msg = JSON.parse(event.data) as ServerMessage;
+        // Infrastructure message — persist the rejoin secret, don't forward to views
+        if (msg.type === "server:rebind_token") {
+          saveRebindToken(roomId, msg.payload.token);
+          return;
+        }
         onMessageRef.current(msg);
       } catch {
         console.warn("[useWebSocket] Failed to parse message:", event.data);

@@ -8,6 +8,7 @@ export const ROOM_FULL                 = "ROOM_FULL";
 export const ROOM_ALREADY_STARTED      = "ROOM_ALREADY_STARTED";
 export const ROOM_HOST_REQUIRED        = "ROOM_HOST_REQUIRED";
 export const ROOM_NOT_ALL_READY        = "ROOM_NOT_ALL_READY";
+export const ROOM_REBIND_UNAUTHORIZED  = "ROOM_REBIND_UNAUTHORIZED";
 
 // Session errors
 export const SESSION_INVALID_STRATEGY      = "SESSION_INVALID_STRATEGY";
