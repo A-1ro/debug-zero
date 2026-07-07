@@ -35,16 +35,6 @@ function fail<T>(errorCode: string, detail?: string): RoomResult<T> {
 // ID generators
 // ============================================================
 
-/** Generates a short uppercase room ID (e.g. "ABC123"). */
-function generateRoomId(): RoomId {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let id = "";
-  for (let i = 0; i < 6; i++) {
-    id += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return id;
-}
-
 /** Generates a UUID v4. */
 function generateUUID(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -64,14 +54,21 @@ export class RoomService {
   /**
    * Create a new room with the given host player.
    * The host player is automatically added as a "player" with "connected" status.
+   *
+   * `roomId` is the identity the Durable Object was addressed by (the URL path
+   * segment routed via idFromName). It MUST become room.id — a room is one DO,
+   * and clients rejoin by this exact id. Generating a fresh id here would make
+   * the broadcast/displayed id diverge from the joinable one, so the room would
+   * be unreachable by the id its own host sees.
    */
   createRoom(params: {
+    roomId: RoomId;
     hostId: PlayerId;
     hostName: string;
     ruleSetId: RuleSetId;
     maxPlayers?: number;
   }): RoomResult<Room> {
-    const { hostId, hostName, ruleSetId, maxPlayers = 4 } = params;
+    const { roomId, hostId, hostName, ruleSetId, maxPlayers = 4 } = params;
 
     const host: Player = {
       id: hostId,
@@ -79,12 +76,6 @@ export class RoomService {
       role: "player",
       connectionStatus: "connected",
     };
-
-    // Ensure unique room ID
-    let roomId: RoomId;
-    do {
-      roomId = generateRoomId();
-    } while (this.repository.has(roomId));
 
     const room: Room = {
       id: roomId,
