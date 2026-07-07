@@ -123,6 +123,9 @@ export class RoomDurableObject implements DurableObject {
   private readonly effectRegistry: EffectRegistry;
   private readonly effectResolver: EffectResolver;
 
+  /** The URL roomId this DO was addressed by (X-Room-Id header). Cached from fetch(). */
+  private urlRoomId: RoomId | undefined;
+
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env
@@ -187,6 +190,15 @@ export class RoomDurableObject implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // Capture the authoritative roomId (URL path segment) passed by the Worker.
+    // Persist it so createRoom can adopt it even after hibernation, and so it
+    // survives a cold start between the WS upgrade and the first join message.
+    const headerRoomId = request.headers.get("X-Room-Id");
+    if (headerRoomId && headerRoomId !== this.urlRoomId) {
+      this.urlRoomId = headerRoomId;
+      await this.state.storage.put("roomId", headerRoomId);
+    }
 
     if (url.pathname === "/ws") {
       if (request.headers.get("Upgrade") !== "websocket") {
@@ -357,6 +369,10 @@ export class RoomDurableObject implements DurableObject {
           role,
         })
       : this.roomService.createRoom({
+          // Adopt the URL roomId so the created room is joinable by the id the
+          // host sees. Fall back to the client-supplied roomId only if the
+          // header was somehow absent (should not happen via the Worker route).
+          roomId: (await this.getUrlRoomId()) ?? message.roomId,
           hostId: message.senderId,
           hostName: playerName,
           ruleSetId: "basic",
@@ -376,6 +392,13 @@ export class RoomDurableObject implements DurableObject {
     await this.saveRoom(updatedRoom);
     await this.issueRebindToken(message.senderId, updatedRoom.id, await this.loadRebindTokens());
     await this.broadcastRoomUpdated(updatedRoom);
+  }
+
+  /** The URL roomId this DO was addressed by, surviving hibernation via storage. */
+  private async getUrlRoomId(): Promise<RoomId | undefined> {
+    if (this.urlRoomId) return this.urlRoomId;
+    this.urlRoomId = await this.state.storage.get<RoomId>("roomId");
+    return this.urlRoomId;
   }
 
   // ── Rebind token management ───────────────────────────────────
@@ -433,6 +456,7 @@ export class RoomDurableObject implements DurableObject {
       // Room disbanded (last player left) — nothing to broadcast
       await this.state.storage.delete("room");
       await this.state.storage.delete("rebind_tokens");
+      await this.state.storage.delete("roomId");
       this.roomRepo.delete(room.id);
       return;
     }

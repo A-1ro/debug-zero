@@ -23,7 +23,11 @@ app.get("/room/:roomId/ws", async (c) => {
   const stub = c.env.ROOM.get(id);
   const wsUrl = new URL(c.req.raw.url);
   wsUrl.pathname = "/ws";
-  return stub.fetch(new Request(wsUrl.toString(), c.req.raw));
+  // The DO cannot recover the idFromName() string it was addressed by, so pass
+  // the URL roomId explicitly — it is the room's authoritative identity.
+  const req = new Request(wsUrl.toString(), c.req.raw);
+  req.headers.set("X-Room-Id", roomId);
+  return stub.fetch(req);
 });
 
 /**
@@ -33,7 +37,9 @@ app.all("/room/:roomId/*", async (c) => {
   const roomId = c.req.param("roomId");
   const id = c.env.ROOM.idFromName(roomId);
   const stub = c.env.ROOM.get(id);
-  return stub.fetch(c.req.raw);
+  const req = new Request(c.req.raw);
+  req.headers.set("X-Room-Id", roomId);
+  return stub.fetch(req);
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
