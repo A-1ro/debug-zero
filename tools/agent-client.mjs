@@ -26,6 +26,22 @@ if (!roomId || !playerId || !cmd) {
   process.exit(2);
 }
 
+// 再バインドトークン: 各コマンドは新規WebSocket＝サーバの再接続パスを通るため、
+// 初回joinで発行されたトークンをファイルに保存して以後のjoinに添付する。
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join as pathJoin } from "node:path";
+const TOKEN_FILE = pathJoin(dirname(fileURLToPath(import.meta.url)), ".rebind-tokens.json");
+function loadTokens() {
+  try { return JSON.parse(readFileSync(TOKEN_FILE, "utf8")); } catch { return {}; }
+}
+function saveToken(key, token) {
+  const tokens = loadTokens();
+  tokens[key] = token;
+  writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 1));
+}
+const TOKEN_KEY = `${roomId}:${playerId}`;
+
 const state = { room: null, session: null, game: null, hand: null, errors: [], events: [] };
 
 function summarize() {
@@ -121,13 +137,20 @@ function maybeResolveWait() {
 }
 
 ws.addEventListener("open", () => {
-  send("client:join_room", { playerName: playerName || playerId, role: "player" });
+  send("client:join_room", {
+    playerName: playerName || playerId,
+    role: "player",
+    rebindToken: loadTokens()[TOKEN_KEY],
+  });
 });
 
 ws.addEventListener("message", (ev) => {
   let m;
   try { m = JSON.parse(ev.data); } catch { return; }
   switch (m.type) {
+    case "server:rebind_token":
+      saveToken(TOKEN_KEY, m.payload.token);
+      break;
     case "server:room_updated":
       state.room = m.payload.room;
       break;

@@ -51,6 +51,7 @@ export type ServerMessageType =
   | "server:game_ended"
   | "server:session_ended"
   | "server:state_sync"
+  | "server:rebind_token"
   | "server:error";
 
 // ============================================================
@@ -70,6 +71,8 @@ export type ClientPayload =
 export interface JoinRoomPayload {
   playerName: string;
   role:       "player" | "spectator";
+  /** Proof of identity when rejoining as an existing player (issued via server:rebind_token) */
+  rebindToken?: string;
 }
 
 export interface LeaveRoomPayload {}
@@ -192,6 +195,11 @@ export interface StateSyncPayload {
   game:     GameView | null;
 }
 
+export interface RebindTokenPayload {
+  /** Secret the client must present in JoinRoomPayload.rebindToken to rejoin as this player */
+  token: string;
+}
+
 export interface ErrorPayload {
   code:        string;
   message:     string;
@@ -210,6 +218,7 @@ export type ServerPayload =
   | GameEndedPayload
   | SessionEndedPayload
   | StateSyncPayload
+  | RebindTokenPayload
   | ErrorPayload;
 
 // ============================================================
@@ -235,4 +244,5 @@ export type ServerMessage =
   | (ServerMessageBase & { type: "server:game_ended";        payload: GameEndedPayload        })
   | (ServerMessageBase & { type: "server:session_ended";     payload: SessionEndedPayload     })
   | (ServerMessageBase & { type: "server:state_sync";        payload: StateSyncPayload        })
+  | (ServerMessageBase & { type: "server:rebind_token";      payload: RebindTokenPayload      })
   | (ServerMessageBase & { type: "server:error";             payload: ErrorPayload            });

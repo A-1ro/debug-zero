@@ -39,11 +39,13 @@ import {
   ROOM_NOT_FOUND,
   ROOM_ALREADY_STARTED,
   ROOM_HOST_REQUIRED,
+  ROOM_REBIND_UNAUTHORIZED,
   SESSION_STRATEGY_NOT_SELECTED,
   WS_DUPLICATE_MESSAGE,
   WS_AUTH_FAILED,
 } from "../../shared/constants";
 import { sanitizeRoomFor, maskSessionPlayers } from "./sanitize";
+import { verifyRebind } from "./rebindAuth";
 
 // ============================================================
 // DO-backed storage implementations
@@ -108,6 +110,7 @@ type WsAttachment = { connectionId: string; playerId?: PlayerId };
  *   "session"      → Session | null
  *   "game:{id}"    → Game
  *   "seen_msgs"    → SeenMsgEntry[]
+ *   "rebind_tokens" → Record<PlayerId, string> (rejoin auth secrets)
  */
 export class RoomDurableObject implements DurableObject {
   private readonly connectionManager: ConnectionManager;
@@ -296,6 +299,15 @@ export class RoomDurableObject implements DurableObject {
     if (room && room.players.some((p) => p.id === message.senderId)) {
       // Player already in room (initial join or reconnect after DO reboot).
       // Rebind connection using DO storage as source of truth.
+      // Takeover guard: the rejoining connection must present the rebind
+      // token issued at the original join — senderId alone is guessable.
+      const tokens = await this.loadRebindTokens();
+      const decision = verifyRebind(tokens[message.senderId], payload.rebindToken);
+      if (!decision.allow) {
+        this.sendErrorToConnection(connectionId, room.id, ROOM_REBIND_UNAUTHORIZED,
+          "invalid or missing rebind token for this playerId");
+        return;
+      }
       const existingWs = this.connectionManager.getWebSocketByPlayerId(message.senderId);
       const newWs = this.connectionManager.getWebSocket(connectionId);
       if (existingWs && newWs) {
@@ -304,6 +316,11 @@ export class RoomDurableObject implements DurableObject {
         this.connectionManager.bind(message.senderId, connectionId);
       }
       this.updateWsAttachment(connectionId, message.senderId);
+      if (decision.issueNew) {
+        // Player joined before token support — issue one now that the
+        // connection is bound (private sends are routed by playerId).
+        await this.issueRebindToken(message.senderId, room.id, tokens);
+      }
       // Reconnect restores the player's connection status; without this the
       // player stays "disconnected" for everyone else forever.
       const me = room.players.find((p) => p.id === message.senderId);
@@ -357,7 +374,44 @@ export class RoomDurableObject implements DurableObject {
     this.updateWsAttachment(connectionId, message.senderId);
     const updatedRoom = result.value;
     await this.saveRoom(updatedRoom);
+    await this.issueRebindToken(message.senderId, updatedRoom.id, await this.loadRebindTokens());
     await this.broadcastRoomUpdated(updatedRoom);
+  }
+
+  // ── Rebind token management ───────────────────────────────────
+
+  private async loadRebindTokens(): Promise<Record<PlayerId, string>> {
+    return (await this.state.storage.get<Record<PlayerId, string>>("rebind_tokens")) ?? {};
+  }
+
+  /** Generate, persist, and privately deliver a fresh rebind token. */
+  private async issueRebindToken(
+    playerId: PlayerId,
+    roomId: Room["id"],
+    tokens: Record<PlayerId, string>
+  ): Promise<void> {
+    const token = crypto.randomUUID();
+    tokens[playerId] = token;
+    await this.state.storage.put("rebind_tokens", tokens);
+    this.broadcaster.send(
+      {
+        id:             crypto.randomUUID() as MessageId,
+        type:           "server:rebind_token",
+        roomId,
+        payload:        { token },
+        visibility:     "player",
+        targetPlayerId: playerId,
+      },
+      () => "player",
+      [playerId]
+    );
+  }
+
+  private async deleteRebindToken(playerId: PlayerId): Promise<void> {
+    const tokens = await this.loadRebindTokens();
+    if (!(playerId in tokens)) return;
+    delete tokens[playerId];
+    await this.state.storage.put("rebind_tokens", tokens);
   }
 
   private async handleLeaveRoom(message: ClientMessage, _connectionId: string): Promise<void> {
@@ -378,9 +432,11 @@ export class RoomDurableObject implements DurableObject {
     if (!updatedRoom) {
       // Room disbanded (last player left) — nothing to broadcast
       await this.state.storage.delete("room");
+      await this.state.storage.delete("rebind_tokens");
       this.roomRepo.delete(room.id);
       return;
     }
+    await this.deleteRebindToken(message.senderId);
     await this.saveRoom(updatedRoom);
     await this.broadcastRoomUpdated(updatedRoom);
   }
