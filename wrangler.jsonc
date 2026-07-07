@@ -3,6 +3,9 @@
   "name": "debug-zero",
   "compatibility_date": "2025-08-03",
   "main": "./src/server/index.ts",
+  // 独自ドメイン debug-zero.com に一本化。workers.dev URLは無効化
+  "routes": [{ "pattern": "debug-zero.com", "custom_domain": true }],
+  "workers_dev": false,
   // SPA: /room/:id への直接アクセス・リロードでも index.html を返す。
   // Worker を先に通すのは WebSocket と health check のみ
   "assets": {
