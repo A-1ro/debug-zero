@@ -127,6 +127,8 @@ export interface TurnTimeouts {
   normal:   number;
   showdown: number;
   raid:     number;
+  /** 介入オファーの応答待ち（A1）。省略時 5000ms。無応答はパス扱い。 */
+  intervention?: number;
 }
 
 export interface RuleSet {

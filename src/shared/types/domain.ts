@@ -106,6 +106,28 @@ export interface RaidState {
   bossActionsLeft:  number;
 }
 
+/**
+ * Waiting state for optional intervention strategies (owner ruling A1).
+ * When a played card triggers other players' on_card_played_by_other
+ * strategies (Control-Add/Sub/Mul/Div, Hack, TrickStar), the effects are NOT
+ * auto-applied. Instead each candidate is offered a choice (like calling a
+ * tile in mahjong) and the game waits — turn does not advance — until every
+ * candidate responds (or the server times them out as "pass").
+ */
+export interface PendingIntervention {
+  /** Snapshot of the trigger card as it was on the field when played. */
+  triggerCard:     FieldCard;
+  /** The player who played the trigger card. */
+  actorId:         PlayerId;
+  /** setNumber before the trigger card's arithmetic (for undo/redo handlers). */
+  setNumberBefore: number;
+  /** Offer recipients, ordered by resolution priority (turn order, starting
+   *  from the player after the actor). */
+  candidates:      { playerId: PlayerId; strategyId: StrategyId }[];
+  /** playerId → activate? Missing key = not yet responded. */
+  responses:       Record<PlayerId, boolean>;
+}
+
 export interface Game {
   id:                  GameId;
   sessionId:           SessionId;
@@ -127,6 +149,9 @@ export interface Game {
   carriedBugs?:        BugId[];
   raidState?:          RaidState;
   showdownState?:      ShowdownState;
+  /** Set while waiting for intervention responses (A1). All other actions
+   *  are rejected until every candidate responds or times out. */
+  pendingIntervention?: PendingIntervention;
   winnerId?:           PlayerId;
   winnerIds?:          PlayerId[];
   events:              EventLog[];
@@ -180,13 +205,21 @@ export interface SelectStrategyAction {
   strategyId: StrategyId;
 }
 
+/** Response to a server:intervention_offer (A1). activate=false is a pass —
+ *  the strategy's once-per-game right is NOT consumed. */
+export interface InterventionResponseAction {
+  type:     "intervention_response";
+  activate: boolean;
+}
+
 export type Action =
   | PlayCardAction
   | RemoveBugAction
   | DrawCardAction
   | ResetOrRaidAction
   | ShowdownSubmitAction
-  | SelectStrategyAction;
+  | SelectStrategyAction
+  | InterventionResponseAction;
 
 // ============================================================
 // Result types
@@ -235,6 +268,8 @@ export interface GamePatch {
   currentTurnIndex?:     number;
   resetCount?:           number;
   raidState?:            RaidState | null;
+  // pendingIntervention: null means clear; undefined means no change
+  pendingIntervention?:  PendingIntervention | null;
   showdownState?:        ShowdownState;
   winnerId?:             PlayerId;
   winnerIds?:            PlayerId[];
@@ -298,5 +333,8 @@ export interface GameView {
   resetCount:       number;
   residualBugs:     BugId[];
   raidState?:       RaidState;
+  /** True while an intervention offer is being resolved (A1). Candidate
+   *  identities/strategies are NOT exposed — boolean only (visibility). */
+  interventionPending?: boolean;
   events:           EventLog[];
 }

@@ -7,6 +7,7 @@ import type {
   EventLog,
   EventId,
 } from "../../shared/types/domain";
+import type { PendingIntervention } from "../../shared/types/domain";
 import type { EffectContext } from "../../shared/types/effects";
 import type { TriggerCondition } from "../../shared/types/rules";
 import type { EffectRegistry } from "./EffectRegistry";
@@ -213,5 +214,111 @@ export class EffectResolver {
     }
 
     return accumulated;
+  }
+
+  /**
+   * A1 (optional interventions): list the players whose on_card_played_by_other
+   * strategy COULD activate right now — trigger matches, usage limit not
+   * reached, not suppressed by a Forbidden bug, and the handler would actually
+   * do something (dry-run returns a non-empty patch, so parity/from-operation
+   * conditions are honored without duplicating handler logic).
+   *
+   * Candidates are returned in resolution-priority order: turn order starting
+   * from the player after the actor (detail-design §8.3 — the doc fixes
+   * "actor's effect → others' interventions" but not the order among multiple
+   * others; turn order from the actor's next seat is the adopted ruling).
+   *
+   * Note: unlike the legacy auto-resolution, Forbidden-suppressed strategies
+   * do NOT emit strategy_invalidated here — a candidate check is not an
+   * activation attempt, and emitting would leak a hidden strategy.
+   */
+  collectInterventionCandidates(
+    game: Game,
+    ctx: EffectContext,
+    playerStrategies: Record<PlayerId, StrategyId>,
+  ): PendingIntervention["candidates"] {
+    const candidates: PendingIntervention["candidates"] = [];
+
+    for (const [playerId, strategyId] of Object.entries(playerStrategies)) {
+      if (!shouldActivateForPlayer(playerId, "on_card_played_by_other", ctx.actorId)) continue;
+
+      const strategyDef = ctx.ruleSet.strategies.find(s => s.id === strategyId);
+      if (!strategyDef) continue;
+      if (strategyDef.effect.trigger.type !== "on_card_played_by_other") continue;
+
+      const limit = strategyDef.effect.usageLimit;
+      const used = game.usedStrategyCounts[playerId]?.[strategyId] ?? 0;
+      if (limit != null && used >= limit) continue;
+
+      if (isForbiddenStrategy(strategyId, game.residualBugs)) continue;
+
+      const handler = this.registry.get(strategyDef.effect.id);
+      if (!handler) continue;
+
+      // Dry-run: only offer when the effect would actually change something
+      const patch = handler(game, { ...ctx, actorId: playerId });
+      if (Object.keys(patch).length === 0) continue;
+
+      candidates.push({ playerId, strategyId });
+    }
+
+    // Resolution priority: turn order starting after the actor
+    const order = game.turnOrder;
+    const start = order.indexOf(ctx.actorId);
+    const priority = (pid: PlayerId): number => {
+      const idx = order.indexOf(pid);
+      if (idx === -1) return order.length; // not in turn order — last
+      return (idx - start - 1 + order.length) % order.length;
+    };
+    candidates.sort((a, b) => priority(a.playerId) - priority(b.playerId));
+    return candidates;
+  }
+
+  /**
+   * A1: apply ONE accepted intervention. Runs the strategy handler with the
+   * accepting player as actor and counts the usage centrally (only when the
+   * effect actually did something — a no-op, e.g. the trigger card was already
+   * removed by an earlier intervention, does not consume the usage right).
+   */
+  applyIntervention(
+    game: Game,
+    playerId: PlayerId,
+    strategyId: StrategyId,
+    ctx: EffectContext,
+  ): GamePatch {
+    const strategyDef = ctx.ruleSet.strategies.find(s => s.id === strategyId);
+    if (!strategyDef) return {};
+
+    // Defensive re-checks (state may have changed since the offer was made)
+    const limit = strategyDef.effect.usageLimit;
+    const used = game.usedStrategyCounts[playerId]?.[strategyId] ?? 0;
+    if (limit != null && used >= limit) return {};
+    if (isForbiddenStrategy(strategyId, game.residualBugs)) {
+      return {
+        appendEvents: [{
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "strategy_invalidated",
+          actorId:   playerId,
+          payload:   { strategyId, reason: "forbidden_bug" },
+        }],
+      };
+    }
+
+    const handler = this.registry.get(strategyDef.effect.id);
+    if (!handler) return {};
+
+    const patch = handler(game, { ...ctx, actorId: playerId });
+    if (Object.keys(patch).length === 0) return {}; // no-op — usage not consumed
+
+    return mergePatch(patch, {
+      usedStrategyCounts: {
+        ...game.usedStrategyCounts,
+        [playerId]: {
+          ...(game.usedStrategyCounts[playerId] ?? {}),
+          [strategyId]: used + 1,
+        },
+      },
+    });
   }
 }
