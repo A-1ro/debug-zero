@@ -458,6 +458,131 @@ describe("Scenario: raidの手番と補充", () => {
   });
 });
 
+describe("Scenario: ボスの手札補充（C裁定・手札切れ凍結の修正）", () => {
+  // 長時間レイドでボスが最後の手札を出し、手札が空のまま手番が回ると
+  // autoActionFor が null → alarm 未再設定で永久凍結、という不具合の修正。
+  // C裁定: ボスも各ラウンド開始時にデッキから手札を補充する。
+
+  it("ボスが最後の手札を出すと次ラウンド開始時に手札が補充される", () => {
+    const game = makeRaidGame({
+      deck: ["1-003", "1-004", "1-005"],
+      // 両バグを有効化 → 次ラウンドはバグ選択なしで即開始（補充を直接観測できる）
+      residualBugs: ["Stack-Forbidden", "Odd-Forbidden"],
+      hands: { [P1]: ["4-001"], [P2]: ["4-002"], [P3]: ["1-009"] }, // ボスは最後の1枚
+      raidState: {
+        bossPlayerId: P3,
+        bossHP: 20,
+        playerHPs: { [P1]: 10, [P2]: 10 },
+        activeBugId: "Odd-Forbidden",
+        roundIndex: 1,
+        turnOrder: [P1, P2],
+        currentTurnIndex: 2, // 全プレイヤー行動済み
+        bossTurn: true,
+        bossActionsLeft: 1, // ボス最後の行動
+      },
+    });
+
+    // ボスが最後の手札を出す → ラウンド終了 → 次ラウンド開始
+    const g = applyAction(
+      game,
+      { type: "play_card", cardId: "1-009", operation: "add", targetId: P1 },
+      makeCtx(P3, seededRng(9)),
+    );
+
+    expect(g.raidState?.roundIndex).toBe(2);
+    expect(g.raidState?.awaitingBugChoice).toBeFalsy(); // 両バグ有効なので選択なし
+    // ボスは手札切れだったが、行動回数（ceil(生存2/2)=1）ぶんデッキ先頭から補充される
+    expect(g.hands[P3]).toEqual(["1-003"]);
+    expect(g.deck).toEqual(["1-004", "1-005"]); // 補充ぶん減る
+    expect(g.events.some(e => e.type === "boss_hand_refilled")).toBe(true);
+  });
+
+  it("補充後、ボスの手番で autoActionFor が手を返す（null 凍結にならない）", () => {
+    const game = makeRaidGame({
+      deck: ["1-003", "1-004", "1-005"],
+      residualBugs: ["Stack-Forbidden", "Odd-Forbidden"],
+      hands: { [P1]: ["4-001"], [P2]: ["4-002"], [P3]: ["1-009"] },
+      raidState: {
+        bossPlayerId: P3,
+        bossHP: 20,
+        playerHPs: { [P1]: 10, [P2]: 10 },
+        activeBugId: "Odd-Forbidden",
+        roundIndex: 1,
+        turnOrder: [P1, P2],
+        currentTurnIndex: 2,
+        bossTurn: true,
+        bossActionsLeft: 1,
+      },
+    });
+    const g = applyAction(
+      game,
+      { type: "play_card", cardId: "1-009", operation: "add", targetId: P1 },
+      makeCtx(P3, seededRng(9)),
+    );
+
+    // ボス手番の状態にして autoActionFor を確認（修正前はここが null で凍結した）
+    const bossTurn: Game = {
+      ...g,
+      raidState: {
+        ...g.raidState!,
+        currentTurnIndex: g.raidState!.turnOrder.length,
+        bossTurn: true,
+        bossActionsLeft: 1,
+      },
+    };
+    const auto = autoActionFor(bossTurn, P3, ruleSet);
+    expect(auto).not.toBeNull();
+    expect(auto?.type).toBe("play_card");
+  });
+
+  // バグ選択待ち（awaitingBugChoice）状態のボス。choose_raid_bug で新ラウンドが始まり
+  // beginRaidRound の補充が走る。補充目標は max(raidBossHandSize, 行動回数)。
+  const awaitingChoiceGame = (): Game =>
+    makeRaidGame({
+      deck: ["1-003", "1-004", "1-005", "1-006"],
+      residualBugs: [], // 候補が残っている → バグ選択待ち
+      hands: { [P1]: ["4-001"], [P2]: ["4-002"], [P3]: [] }, // ボスは空
+      raidState: {
+        bossPlayerId: P3,
+        bossHP: 20,
+        playerHPs: { [P1]: 10, [P2]: 10 },
+        activeBugId: "",
+        roundIndex: 2,
+        turnOrder: [],
+        currentTurnIndex: 0,
+        bossTurn: false,
+        bossActionsLeft: 0,
+        awaitingBugChoice: true,
+        bugCandidates: ["Stack-Forbidden", "Odd-Forbidden"],
+      },
+    });
+
+  it("既定（raidBossHandSize 未設定）は行動回数ちょうど補充（プレイヤーの引き分を奪わない）", () => {
+    const g = applyAction(
+      awaitingChoiceGame(),
+      { type: "choose_raid_bug", bugId: "Odd-Forbidden" },
+      makeCtx(P3, seededRng(9)),
+    );
+    // 生存2人 → 行動回数 ceil(2/2)=1 → 1枚だけ補充
+    expect(g.hands[P3]).toHaveLength(1);
+  });
+
+  it("raidBossHandSize を設定するとその floor まで補充する（データ駆動）", () => {
+    const buffedRuleSet: RuleSet = {
+      ...ruleSet,
+      initialConfig: { ...ruleSet.initialConfig, raidBossHandSize: 3 },
+    };
+    const ctx: EngineContext = { ...makeCtx(P3, seededRng(9)), ruleSet: buffedRuleSet };
+    const g = applyAction(
+      awaitingChoiceGame(),
+      { type: "choose_raid_bug", bugId: "Odd-Forbidden" },
+      ctx,
+    );
+    // max(raidBossHandSize=3, 行動回数=1)=3 → 3枚補充
+    expect(g.hands[P3]).toHaveLength(3);
+  });
+});
+
 describe("action_result のレイド手番投影（サーバ側手番修正）", () => {
   const baseRs: RaidState = {
     bossPlayerId: P3,

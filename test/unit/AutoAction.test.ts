@@ -155,4 +155,21 @@ describe("autoActionFor — raid phase", () => {
     const a = autoActionFor(g, P1, ruleSet);
     expect(a).toEqual({ type: "draw_card" });
   });
+
+  // 凍結修正のシーム: ボスが手番で手札切れだと autoActionFor は null を返す
+  // （ボスはドロー・除去・スキップ不可）。この null は本来 GameEngine の
+  // ラウンド開始時補充で発生しないが、万一起きても RoomDurableObject.alarm は
+  // turnGuard を削除せず alarm を再設定する（belt-and-suspenders）＝凍結しない。
+  it("ボスが手番で手札切れなら null（DO 側で alarm 再設定＝凍結しない）", () => {
+    const g = raidBase({
+      hands: { [P1]: ["9-001"], [P2]: [] }, // P2=ボスが空
+      deck: [],
+      raidState: {
+        bossPlayerId: P2, bossHP: 14, playerHPs: { [P1]: 10 },
+        activeBugId: "", roundIndex: 1, turnOrder: [P1, P2], currentTurnIndex: 1, // ボス手番
+        bossActionsLeft: 1,
+      },
+    });
+    expect(autoActionFor(g, P2, ruleSet)).toBeNull();
+  });
 });

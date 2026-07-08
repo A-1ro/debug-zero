@@ -807,9 +807,40 @@ function aliveRaidPlayers(playerHPs: Record<PlayerId, number>): PlayerId[] {
 }
 
 /**
+ * Refill the boss's hand up to `targetSize` by drawing from the top of the deck
+ * (C ruling: レイド戦でボスも手札を補充する). Bounded by deck size — never draws
+ * more cards than exist. Returns updated hands/deck plus the cards drawn (empty
+ * when the boss is already at/above target or the deck is empty). Pure.
+ */
+function refillBossHand(
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+  bossPlayerId: PlayerId,
+  targetSize: number,
+): { hands: Record<PlayerId, CardId[]>; deck: CardId[]; drawn: CardId[] } {
+  const bossHand = hands[bossPlayerId] ?? [];
+  const need = Math.min(Math.max(0, targetSize - bossHand.length), deck.length);
+  if (need === 0) return { hands, deck, drawn: [] };
+  const drawn = deck.slice(0, need);
+  return {
+    hands: { ...hands, [bossPlayerId]: [...bossHand, ...drawn] },
+    deck:  deck.slice(need),
+    drawn,
+  };
+}
+
+/**
  * Begin a raid round once the bug is decided (D3): roll the 1D10 turn order,
- * activate the chosen bug, reset the boss action budget. Returns the fresh
- * RaidState plus residualBugs and the round-start events.
+ * activate the chosen bug, reset the boss action budget, and refill the boss's
+ * hand (C ruling). Returns the fresh RaidState plus residualBugs, updated
+ * hands/deck, and the round-start events.
+ *
+ * Boss refill (C ruling): mirrors how players top their hand up from the deck,
+ * but at each round's start (the boss's natural cadence — it acts as a burst of
+ * `bossActionsLeft` attacks, not a single draw-and-pass turn). The refill target
+ * is max(bossHandSize, bossActionsLeft) so the boss can always complete its
+ * attacks; the deck is recycled from the field at round end, so cards are
+ * available here. This makes the empty-handed-boss freeze unreachable.
  */
 function beginRaidRound(
   base: RaidState,
@@ -817,9 +848,19 @@ function beginRaidRound(
   residualBugs: BugId[],
   roundIndex: number,
   rng: () => number,
-): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+  bossHandSize: number,
+): {
+  raidState: RaidState;
+  residualBugs: BugId[];
+  events: EventLog[];
+  hands: Record<PlayerId, CardId[]>;
+  deck: CardId[];
+} {
   const alive = aliveRaidPlayers(base.playerHPs);
   const { order, diceResults } = rollRaidTurnOrder(alive, rng);
+  const bossActionsLeft = Math.ceil(alive.length / 2);
 
   const newResidual = chosenBug && !residualBugs.includes(chosenBug)
     ? [...residualBugs, chosenBug]
@@ -843,6 +884,23 @@ function beginRaidRound(
     payload:   { roundIndex, activeBugId: chosenBug, turnOrder: order, diceResults },
   });
 
+  // Boss refill (C ruling): top the boss hand up so it can make all its attacks.
+  const refill = refillBossHand(
+    hands,
+    deck,
+    base.bossPlayerId,
+    Math.max(bossHandSize, bossActionsLeft),
+  );
+  if (refill.drawn.length > 0) {
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "boss_hand_refilled",
+      actorId:   "boss",
+      payload:   { count: refill.drawn.length, roundIndex, raid: true },
+    });
+  }
+
   const raidState: RaidState = {
     ...base,
     activeBugId:      chosenBug,
@@ -851,12 +909,18 @@ function beginRaidRound(
     diceResults,
     currentTurnIndex: 0,
     bossTurn:         false,
-    bossActionsLeft:  Math.ceil(alive.length / 2),
+    bossActionsLeft,
     awaitingBugChoice: false,
     bugCandidates:    undefined,
   };
 
-  return { raidState, residualBugs: newResidual, events };
+  return {
+    raidState,
+    residualBugs: newResidual,
+    events,
+    hands: refill.hands,
+    deck:  refill.deck,
+  };
 }
 
 /**
@@ -864,13 +928,31 @@ function beginRaidRound(
  * choose one (D2) — enter the awaiting-choice state and wait. Otherwise (every
  * bug already active) roll the turn order and begin immediately.
  */
+/**
+ * Optional data-driven floor for the boss's per-round hand refill (C ruling).
+ * Unset (0) means "refill to exactly the round's action budget" (bossActionsLeft);
+ * a positive value gives the boss a reserve above its budget. The effective
+ * target is computed in beginRaidRound as max(bossActionsLeft, this).
+ */
+function bossHandTarget(ruleSet: RuleSet): number {
+  return ruleSet.initialConfig.raidBossHandSize ?? 0;
+}
+
 function enterNextRaidRound(
   combat: { bossPlayerId: PlayerId; bossHP: number; playerHPs: Record<PlayerId, number> },
   residualBugs: BugId[],
   ruleSet: RuleSet,
   roundIndex: number,
   rng: () => number,
-): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+): {
+  raidState: RaidState;
+  residualBugs: BugId[];
+  events: EventLog[];
+  hands: Record<PlayerId, CardId[]>;
+  deck: CardId[];
+} {
   const base: RaidState = {
     bossPlayerId:     combat.bossPlayerId,
     bossHP:           combat.bossHP,
@@ -885,12 +967,17 @@ function enterNextRaidRound(
 
   const candidates = raidBugCandidates(residualBugs, ruleSet);
   if (candidates.length === 0) {
-    return beginRaidRound(base, "", residualBugs, roundIndex, rng);
+    // No bug to choose → the round begins now, so refill the boss here.
+    return beginRaidRound(base, "", residualBugs, roundIndex, rng, hands, deck, bossHandTarget(ruleSet));
   }
+  // The boss must first pick a bug; the round (and boss refill) begins once the
+  // choice resolves in applyChooseRaidBug. Leave hands/deck untouched for now.
   return {
     raidState: { ...base, awaitingBugChoice: true, bugCandidates: candidates },
     residualBugs,
     events: [],
+    hands,
+    deck,
   };
 }
 
@@ -907,7 +994,7 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
   // Round 1: the boss chooses the bug (D2), then 1D10 decides the order (D3).
   const next = enterNextRaidRound(
     { bossPlayerId: actorId, bossHP, playerHPs },
-    game.residualBugs, ruleSet, 1, rng,
+    game.residualBugs, ruleSet, 1, rng, game.hands, game.deck,
   );
 
   // Clear the field — move all field card IDs to excludedCards
@@ -934,6 +1021,8 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
   return applyPatch(game, {
     phase:         "raid",
     field:         [],
+    hands:         next.hands,
+    deck:          next.deck,
     excludedCards: [...game.excludedCards, ...allFieldCardIds],
     residualBugs:  next.residualBugs,
     raidState:     next.raidState,
@@ -944,9 +1033,14 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
 /** D2: the boss's chosen bug resolves the awaiting state and begins the round. */
 function applyChooseRaidBug(game: Game, action: ChooseRaidBugAction, ctx: EngineContext): Game {
   const rs = game.raidState!; // validated upstream (awaitingBugChoice, boss, candidate)
-  const { rng = Math.random } = ctx;
-  const begun = beginRaidRound(rs, action.bugId, game.residualBugs, rs.roundIndex, rng);
+  const { ruleSet, rng = Math.random } = ctx;
+  const begun = beginRaidRound(
+    rs, action.bugId, game.residualBugs, rs.roundIndex, rng,
+    game.hands, game.deck, bossHandTarget(ruleSet),
+  );
   return applyPatch(game, {
+    hands:        begun.hands,
+    deck:         begun.deck,
     residualBugs: begun.residualBugs,
     raidState:    begun.raidState,
     appendEvents: begun.events,
@@ -1053,9 +1147,11 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       }
       const next = enterNextRaidRound(
         { bossPlayerId: rs.bossPlayerId, bossHP, playerHPs },
-        residualBugs, ruleSet, roundIndex + 1, rng,
+        residualBugs, ruleSet, roundIndex + 1, rng, newHands, deck,
       );
       residualBugs = next.residualBugs;
+      Object.assign(newHands, next.hands);
+      deck = next.deck;
       events.push(...next.events);
       const ns = next.raidState;
       turnOrder = ns.turnOrder;

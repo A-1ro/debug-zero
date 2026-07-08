@@ -74,7 +74,10 @@ export function autoActionFor(
     // ボス: バグの制約を受けない（オーナー裁定1）。最小カードで生存者を攻撃。
     if (playerId === rs.bossPlayerId) {
       const c = lowestCard(hand);
-      if (!c) return null; // ボスは補充・除去できない（手札切れは対象外）
+      // C裁定: ボスはラウンド開始時に手札を補充されるので、手番時に手札切れは
+      // 事実上起きない。万一（デッキも空など）空なら手を出せない＝null を返すが、
+      // 呼び出し側の alarm はこの null でも固まらず再アームする（belt-and-suspenders）。
+      if (!c) return null;
       const target = Object.entries(rs.playerHPs)
         .filter(([, hp]) => hp > 0)
         .map(([id]) => id as PlayerId)[0];

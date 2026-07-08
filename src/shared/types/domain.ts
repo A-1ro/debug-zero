@@ -330,6 +330,7 @@ export type EventType =
   | "raid_round_started"
   | "hp_changed"
   | "card_drawn"
+  | "boss_hand_refilled"
   | "turn_skipped"
   | "player_eliminated"
   | "game_ended"

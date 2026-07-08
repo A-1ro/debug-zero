@@ -146,6 +146,9 @@ function parseInitialConfig(raw: Raw): InitialConfig {
     initialHandSize:    assertPositiveInt(raw?.initialHandSize,    "initialConfig.initialHandSize"),
     initialHP:          assertPositiveInt(raw?.initialHP,          "initialConfig.initialHP"),
     setNumberFormula:   assertString(raw?.setNumberFormula,        "initialConfig.setNumberFormula"),
+    ...(raw?.raidBossHandSize != null && {
+      raidBossHandSize: assertPositiveInt(raw?.raidBossHandSize,   "initialConfig.raidBossHandSize"),
+    }),
   };
 }
 
