@@ -23,7 +23,7 @@ import type {
 } from "../../shared/types/domain";
 import type { RuleSet, RemovalCost } from "../../shared/types/rules";
 import type { EffectContext } from "../../shared/types/effects";
-import { validate, raidPlayerHasLegalMove } from "./ActionValidator";
+import { validate, raidPlayerHasLegalMove, normalPlayerHasLegalMove } from "./ActionValidator";
 import { resolve as arithmeticResolve } from "./ArithmeticJudge";
 import { nextTurnIndex } from "./TurnManager";
 import {
@@ -448,72 +448,34 @@ function applyInterventionResponse(
 // ============================================================
 
 function applyDrawCard(game: Game, _action: DrawCardAction, ctx: EngineContext): Game {
-  const { actorId, ruleSet } = ctx;
+  const { actorId } = ctx;
 
-  // Raid refill (手札補充): draw one card, then pass the raid turn
-  if (game.phase === "raid" && game.raidState) {
-    const rs = game.raidState;
-    const [drawnCard, ...remainingDeck] = game.deck;
-    return applyPatch(game, {
-      deck:  remainingDeck,
-      hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
-      raidState: {
-        ...rs,
-        ...advanceRaidPlayerTurn(rs),
-      },
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "card_drawn",
-        actorId,
-        payload:   { cardId: drawnCard, raid: true },
-      }],
-    });
+  // D10 (owner ruling): self-draw (手札補充) is a raid-phase-only action.
+  // Normal-phase draws are rejected upstream by validateDrawCard; the normal
+  // hand auto-refills after each card play (see continueAfterCardEffects). This
+  // guard is defensive — applyAction never reaches here outside a raid.
+  const rs = game.raidState;
+  if (game.phase !== "raid" || !rs) {
+    return game;
   }
 
-  let gameAfterDraw = game;
-  if (game.deck.length > 0) {
-    const [drawnCard, ...remainingDeck] = game.deck;
-    const updatedHand = [...(game.hands[actorId] ?? []), drawnCard];
-    gameAfterDraw = applyPatch(game, {
-      deck:  remainingDeck,
-      hands: { ...game.hands, [actorId]: updatedHand },
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "card_drawn",
-        actorId,
-        payload:   { cardId: drawnCard },
-      }],
-    });
-  }
-
-  const gameAfterTurn = applyPatch(gameAfterDraw, {
-    currentTurnIndex: nextTurnIndex(gameAfterDraw),
+  // Raid refill: draw one card, then pass the raid turn
+  const [drawnCard, ...remainingDeck] = game.deck;
+  return applyPatch(game, {
+    deck:  remainingDeck,
+    hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
+    raidState: {
+      ...rs,
+      ...advanceRaidPlayerTurn(rs),
+    },
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "card_drawn",
+      actorId,
+      payload:   { cardId: drawnCard, raid: true },
+    }],
   });
-
-  // Deck may have just run out — the deck-empty → showdown transition must
-  // fire on draws too, not only on card plays (otherwise the game stalls in
-  // normal phase until someone happens to play a card)
-  const transition = checkPhaseTransition(gameAfterTurn, ruleSet.phases);
-  if (transition && isPhaseTransition(transition.to)) {
-    return applyPatch(gameAfterTurn, {
-      phase: transition.to,
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "phase_changed",
-        actorId:   "system",
-        payload: {
-          from:   gameAfterTurn.phase,
-          to:     transition.to,
-          reason: transition.conditionType,
-        },
-      }],
-    });
-  }
-
-  return gameAfterTurn;
 }
 
 // ============================================================
@@ -1207,6 +1169,21 @@ function resolveRaidEnd(game: Game, actorId: PlayerId): Game {
  * cascades through any further stuck players.
  */
 function applySkipTurn(game: Game, ctx: EngineContext): Game {
+  // D10: normal-phase skip — the current player has no legal card to play and
+  // self-draw is illegal. Advance the turn and record the skip.
+  if (game.phase === "normal") {
+    return applyPatch(game, {
+      currentTurnIndex: nextTurnIndex(game),
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: ctx.actorId, reason: "no_legal_move" },
+      }],
+    });
+  }
+
   const rs = game.raidState!; // validated upstream
   const adv = advanceRaidPlayerTurn(rs);
   return applyPatch(game, {
@@ -1265,6 +1242,59 @@ function skipStuckRaidPlayers(game: Game, ruleSet: RuleSet): Game {
   return g;
 }
 
+/**
+ * D10 (owner ruling): while the normal-phase turn is on a player who has zero
+ * legal moves (every card bug-forbidden; self-draw is illegal), advance past
+ * them and emit turn_skipped. Cascades until a player with a legal move is on
+ * the clock. If a FULL rotation is skipped without anyone able to move (total
+ * deadlock — e.g. both Odd- and Even-Forbidden active), the game is forced to
+ * the showdown phase so it resolves instead of skipping forever (adopted ruling;
+ * the old code drained the deck via draws to reach showdown, which draw removal
+ * would otherwise strand). Pure function. Never runs while an intervention is
+ * pending or a reset_or_raid choice is owed.
+ */
+function skipStuckNormalPlayers(game: Game, _ruleSet: RuleSet): Game {
+  let g = game;
+  let skipped = 0;
+  while (
+    g.phase === "normal" &&
+    g.status === "in-progress" &&
+    !g.pendingIntervention
+  ) {
+    const actor = g.turnOrder[g.currentTurnIndex];
+    if (actor === undefined) break;
+    if (normalPlayerHasLegalMove(g, actor)) break;
+
+    if (skipped >= g.turnOrder.length) {
+      // Went a full lap and nobody can move → force showdown to resolve.
+      g = applyPatch(g, {
+        phase: "showdown",
+        appendEvents: [{
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "phase_changed",
+          actorId:   "system",
+          payload:   { from: "normal", to: "showdown", reason: "normal_deadlock" },
+        }],
+      });
+      break;
+    }
+
+    g = applyPatch(g, {
+      currentTurnIndex: nextTurnIndex(g),
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: actor, reason: "no_legal_move" },
+      }],
+    });
+    skipped++;
+  }
+  return g;
+}
+
 // ============================================================
 // applyAction — main entry point
 // ============================================================
@@ -1316,6 +1346,15 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
   // never stalls on a fully bug-forbidden hand.
   if (result.phase === "raid" && result.status === "in-progress" && result.raidState) {
     result = skipStuckRaidPlayers(result, ctx.ruleSet);
+  } else if (
+    result.phase === "normal" &&
+    result.status === "in-progress" &&
+    !result.pendingIntervention
+  ) {
+    // D10 (deadlock fix): after any normal-phase action, proactively skip any
+    // player now on the clock with zero legal moves so the game never stalls on
+    // a fully bug-forbidden hand (self-draw is no longer a legal escape).
+    result = skipStuckNormalPlayers(result, ctx.ruleSet);
   }
   return result;
 }

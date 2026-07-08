@@ -184,6 +184,39 @@ export function raidPlayerHasLegalMove(
   return false;
 }
 
+/** True if the given hand card is legal to play in the normal phase. Only bug
+ *  constraints can block it — add/sub are always arithmetically legal, so a card
+ *  is playable unless a forbidding bug (Odd/Even/Stack) forbids its value. */
+export function isNormalCardPlayable(game: Game, cardId: CardId): boolean {
+  return checkForbiddenBugs(game, cardValueFromId(cardId), false).valid;
+}
+
+/**
+ * True if this player just played a 0-card and still owes the reset_or_raid
+ * choice (the turn does not advance until they choose). Detected from field
+ * state: the last field card is a 0 played by this player, still in the normal
+ * phase. Such a player is NOT stuck — reset_or_raid is their legal move.
+ */
+export function normalZeroChoicePending(game: Game, playerId: PlayerId): boolean {
+  if (game.phase !== "normal") return false;
+  const last = game.field.length > 0 ? game.field[game.field.length - 1] : undefined;
+  if (!last) return false;
+  return cardValueFromId(last.cardId) === 0 && last.playerId === playerId;
+}
+
+/**
+ * D10 (owner ruling): does this normal-phase player have ANY legal move? Their
+ * only proactive turn action is play_card (self-draw is raid-only now); a card
+ * is playable unless a forbidding bug blocks it. A pending reset_or_raid choice
+ * also counts as a legal move. When this returns false the turn is skipped
+ * (turn_skipped, reason no_legal_move) — same approach as the raid deadlock fix.
+ */
+export function normalPlayerHasLegalMove(game: Game, playerId: PlayerId): boolean {
+  if (normalZeroChoicePending(game, playerId)) return true;
+  const hand = game.hands[playerId] ?? [];
+  return hand.some(id => isNormalCardPlayable(game, id));
+}
+
 function validatePlayCard(
   game: Game,
   action: PlayCardAction,
@@ -289,18 +322,14 @@ function validateDrawCard(game: Game, ctx: ValidateContext): ValidationResult {
     return ok();
   }
 
-  if (!isCurrentTurnPlayer(game, actorId)) {
-    return fail(ACTION_NOT_YOUR_TURN);
-  }
-
-  const hand = game.hands[actorId] ?? [];
-  const maxHandSize = ruleSet.initialConfig.initialHandSize;
-
-  if (hand.length >= maxHandSize) {
-    return fail(ACTION_HAND_FULL, `Hand is full (max ${maxHandSize})`);
-  }
-
-  return ok();
+  // D10 (owner ruling): self-draw (hand refill) is a raid-phase-only action.
+  // In the normal (and showdown) phase, drawing is illegal — the hand is
+  // auto-refilled after each card play (see continueAfterCardEffects). Rule doc
+  // §4.3/§5.3: the 手札補充 button is shown only during the raid phase.
+  return fail(
+    ACTION_INVALID_PHASE,
+    "Drawing is only allowed during a raid; the normal-phase hand auto-refills after a play",
+  );
 }
 
 // ============================================================
@@ -520,33 +549,49 @@ function validateChooseRaidBug(
 // ============================================================
 
 /**
- * A raid turn player with zero legal moves may be skipped. Only valid during a
- * raid, for the current non-boss actor, and only when they genuinely have no
- * legal action (all cards forbidden AND no draw AND no affordable removal). The
- * boss is never skipped — it is exempt from bug constraints.
+ * A turn player with zero legal moves may be skipped.
+ *
+ * - Normal phase (D10): the current player is skipped only when every card in
+ *   hand is bug-forbidden (self-draw is no longer a legal escape) and no
+ *   reset_or_raid choice is pending.
+ * - Raid phase (owner ruling 2): the current non-boss player is skipped only
+ *   when they genuinely have no legal action (all cards forbidden AND no draw
+ *   AND no affordable removal). The boss is never skipped — it is exempt from
+ *   bug constraints.
  */
 function validateSkipTurn(
   game: Game,
   _action: SkipTurnAction,
   ctx: ValidateContext,
 ): ValidationResult {
-  if (game.phase !== "raid" || !game.raidState) {
-    return fail(ACTION_INVALID_PHASE, "skip_turn is only available during a raid");
+  if (game.phase === "normal") {
+    if (!isCurrentTurnPlayer(game, ctx.actorId)) {
+      return fail(ACTION_NOT_YOUR_TURN);
+    }
+    if (normalPlayerHasLegalMove(game, ctx.actorId)) {
+      return fail(ACTION_NO_LEGAL_MOVE, "A legal move is available; the turn cannot be skipped");
+    }
+    return ok();
   }
-  const rs = game.raidState;
-  if (rs.awaitingBugChoice) {
-    return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+
+  if (game.phase === "raid" && game.raidState) {
+    const rs = game.raidState;
+    if (rs.awaitingBugChoice) {
+      return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+    }
+    if (ctx.actorId === rs.bossPlayerId) {
+      return fail(ACTION_INVALID_PHASE, "The boss is exempt from bugs and is never skipped");
+    }
+    if (raidActor(rs) !== ctx.actorId) {
+      return fail(ACTION_NOT_YOUR_TURN);
+    }
+    if (raidPlayerHasLegalMove(game, ctx.actorId, ctx.ruleSet)) {
+      return fail(ACTION_NO_LEGAL_MOVE, "A legal move is available; the turn cannot be skipped");
+    }
+    return ok();
   }
-  if (ctx.actorId === rs.bossPlayerId) {
-    return fail(ACTION_INVALID_PHASE, "The boss is exempt from bugs and is never skipped");
-  }
-  if (raidActor(rs) !== ctx.actorId) {
-    return fail(ACTION_NOT_YOUR_TURN);
-  }
-  if (raidPlayerHasLegalMove(game, ctx.actorId, ctx.ruleSet)) {
-    return fail(ACTION_NO_LEGAL_MOVE, "A legal move is available; the turn cannot be skipped");
-  }
-  return ok();
+
+  return fail(ACTION_INVALID_PHASE, "skip_turn is only available in the normal or raid phase");
 }
 
 // ============================================================

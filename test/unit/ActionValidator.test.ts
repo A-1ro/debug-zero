@@ -7,8 +7,8 @@ import {
   ACTION_HAND_EMPTY,
   ACTION_INVALID_CARD,
   ACTION_INVALID_OPERATION,
-  ACTION_HAND_FULL,
   ACTION_BUG_FORBIDDEN,
+  ACTION_NO_LEGAL_MOVE,
   ACTION_RESET_LIMIT_EXCEEDED,
   ACTION_INVALID_BUG_REMOVAL_COST,
   ACTION_INVALID_PHASE,
@@ -166,25 +166,53 @@ describe("validate play_card", () => {
 // draw_card
 // ============================================================
 
-describe("validate draw_card", () => {
-  it("fails when not actor's turn", () => {
-    const result = validate(makeGame(), { type: "draw_card" }, ctx(P2));
+describe("validate draw_card (D10: 通常フェーズの自発ドローは違法)", () => {
+  it("通常フェーズのドローは ACTION_INVALID_PHASE で拒否される（手番あり・手札に空きあり）", () => {
+    // P1 has 2 cards (< 5) and it is P1's turn — かつては合法だったが D10 で違法に
+    const result = validate(makeGame(), { type: "draw_card" }, ctx(P1));
     expect(result.valid).toBe(false);
-    expect(result.errorCode).toBe(ACTION_NOT_YOUR_TURN);
+    expect(result.errorCode).toBe(ACTION_INVALID_PHASE);
   });
 
-  it("fails when hand is full (>= initialHandSize)", () => {
-    // initialHandSize = 5 in fixture; give P1 5 cards
+  it("手札が満杯でも通常フェーズのドローは ACTION_INVALID_PHASE（フェーズ判定が先）", () => {
     const game = makeGame({ hands: { [P1]: ["1-1", "2-1", "3-1", "4-1", "5-1"], [P2]: [] } });
     const result = validate(game, { type: "draw_card" }, ctx(P1));
     expect(result.valid).toBe(false);
-    expect(result.errorCode).toBe(ACTION_HAND_FULL);
+    expect(result.errorCode).toBe(ACTION_INVALID_PHASE);
+  });
+});
+
+// ============================================================
+// skip_turn — normal phase (D10 zero-legal-moves)
+// ============================================================
+
+describe("validate skip_turn — normal phase (D10)", () => {
+  it("全札が禁止バグ対象なら skip_turn は合法", () => {
+    // Odd-Forbidden 有効・手札は全て奇数（3,5）→ 合法カードゼロ
+    const game = makeGame({ residualBugs: ["Odd-Forbidden"], hands: { [P1]: ["3-1", "5-1"], [P2]: [] } });
+    const result = validate(game, { type: "skip_turn" }, ctx(P1));
+    expect(result.valid).toBe(true);
   });
 
-  it("succeeds when hand has room", () => {
-    // P1 has 2 cards (< 5)
-    const result = validate(makeGame(), { type: "draw_card" }, ctx(P1));
-    expect(result.valid).toBe(true);
+  it("合法カードが1枚でもあれば skip_turn は ACTION_NO_LEGAL_MOVE で拒否", () => {
+    // Odd-Forbidden 有効だが 2 は偶数で出せる → スキップ不可
+    const game = makeGame({ residualBugs: ["Odd-Forbidden"], hands: { [P1]: ["3-1", "2-1"], [P2]: [] } });
+    const result = validate(game, { type: "skip_turn" }, ctx(P1));
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ACTION_NO_LEGAL_MOVE);
+  });
+
+  it("バグが無ければ（通常は出せる）skip_turn は拒否", () => {
+    const result = validate(makeGame(), { type: "skip_turn" }, ctx(P1));
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ACTION_NO_LEGAL_MOVE);
+  });
+
+  it("手番でなければ skip_turn は ACTION_NOT_YOUR_TURN", () => {
+    const game = makeGame({ residualBugs: ["Odd-Forbidden"], hands: { [P1]: ["3-1"], [P2]: ["5-1"] } });
+    const result = validate(game, { type: "skip_turn" }, ctx(P2));
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ACTION_NOT_YOUR_TURN);
   });
 });
 

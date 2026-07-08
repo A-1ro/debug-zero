@@ -70,15 +70,28 @@ function makeGame(overrides: Partial<Game> = {}): Game {
 }
 
 describe("Scenario: 山札枯渇 → showdown移行", () => {
-  it("最後の1枚をdrawで引くとshowdownへ遷移する（B5回帰）", () => {
+  it("最後の1枚がplay_cardの自動補充で引かれるとshowdownへ遷移する（B5回帰）", () => {
+    // D10: 通常フェーズの自発ドローは廃止。山札枯渇はカードプレイ後の自動補充で起きる。
+    const game = makeGame({
+      deck:      ["7-001"],
+      setNumber: 10,
+      hands:     { [P1]: ["1-001"], [P2]: ["2-001"], [P3]: ["3-001"] },
+    });
+    // P1 が 1 を sub → setNumber=9（勝利でも負数でもない）→ 自動補充で最後の7-001を引く→山札0→showdown
+    const g = applyAction(game, { type: "play_card", cardId: "1-001", operation: "sub" }, makeCtx(P1));
+    expect(g.deck).toHaveLength(0);
+    expect(g.phase).toBe("showdown");
+    expect(g.events.some(e => e.type === "phase_changed")).toBe(true);
+  });
+
+  it("通常フェーズの draw_card は ACTION_INVALID_PHASE で拒否される（D10）", () => {
     const game = makeGame({
       deck:  ["7-001"],
       hands: { [P1]: ["1-001"], [P2]: ["2-001"], [P3]: ["3-001"] },
     });
-    const g = applyAction(game, { type: "draw_card" }, makeCtx(P1));
-    expect(g.deck).toHaveLength(0);
-    expect(g.phase).toBe("showdown");
-    expect(g.events.some(e => e.type === "phase_changed")).toBe(true);
+    expect(() =>
+      applyAction(game, { type: "draw_card" }, makeCtx(P1))
+    ).toThrow("ACTION_INVALID_PHASE");
   });
 
   it("showdown中はplay_card/draw_cardが拒否される", () => {
@@ -92,6 +105,39 @@ describe("Scenario: 山札枯渇 → showdown移行", () => {
     expect(() =>
       applyAction(game, { type: "draw_card" }, makeCtx(P1))
     ).toThrow("ACTION_INVALID_PHASE");
+  });
+});
+
+describe("Scenario: 通常フェーズの詰み手番スキップ（D10）", () => {
+  it("次の手番プレイヤーが全札禁止なら自動でスキップされ、動ける人まで手番が進む", () => {
+    // Odd-Forbidden 有効。P1=偶数(出せる)/P2=奇数のみ(詰み)/P3=偶数(出せる)。
+    const game = makeGame({
+      setNumber:    10,
+      residualBugs: ["Odd-Forbidden"],
+      deck:         ["8-001", "6-001"], // P1の自動補充ぶん（枯渇→showdownを避ける）
+      hands:        { [P1]: ["2-001"], [P2]: ["3-001"], [P3]: ["4-001"] },
+    });
+    // P1 が 2 を sub → 手番は P2 へ進むが P2 は詰み → 事後パスで P3 までスキップ
+    const g = applyAction(game, { type: "play_card", cardId: "2-001", operation: "sub" }, makeCtx(P1));
+    expect(g.phase).toBe("normal");
+    expect(g.turnOrder[g.currentTurnIndex]).toBe(P3);
+    const skips = g.events.filter(e => e.type === "turn_skipped");
+    expect(skips.some(e => (e.payload as { playerId: string }).playerId === P2)).toBe(true);
+  });
+
+  it("全員が詰み（Odd+Even両方禁止）なら1周スキップ後にshowdownへ強制遷移する", () => {
+    const game = makeGame({
+      setNumber:    10,
+      residualBugs: ["Odd-Forbidden", "Even-Forbidden"],
+      deck:         [],
+      hands:        { [P1]: ["3-001"], [P2]: ["4-001"], [P3]: ["5-001"] },
+    });
+    // P1 は詰み → 自分の手番を skip_turn。事後パスで全員スキップ→総詰み→showdown。
+    const g = applyAction(game, { type: "skip_turn" }, makeCtx(P1));
+    expect(g.phase).toBe("showdown");
+    expect(
+      g.events.some(e => e.type === "phase_changed" && (e.payload as { reason: string }).reason === "normal_deadlock"),
+    ).toBe(true);
   });
 });
 
