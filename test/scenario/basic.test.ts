@@ -341,6 +341,74 @@ describe("Scenario: セッション勝利条件", () => {
     if (!lastResult.ok) return;
     expect(lastResult.value.status).toBe("finished");
     expect(lastResult.value.winnerId).toBe(P1);
+    expect(lastResult.value.winnerIds).toEqual([P1]);
+  });
+
+  it("同一ゲームで複数人が同時に3勝目に到達すると全員がセッション勝者になる（A6）", async () => {
+    const storage = new InMemorySessionStorage();
+    const service = new SessionService(storage);
+
+    const startResult = await service.startSession({
+      roomId:    "room-a6",
+      sessionId: "session-a6",
+      players: [
+        { playerId: P1, strategyId: "Zero" },
+        { playerId: P2, strategyId: "Zero" },
+      ],
+      ruleSetId: "basic",
+      ruleSet,
+    });
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { session } = startResult.value;
+
+    // 両者2勝の状態を作る（showdown引き分けが2回続いた想定）
+    await service.recordWins({ sessionId: session.id, winnerIds: [P1, P2], ruleSet });
+    await service.recordWins({ sessionId: session.id, winnerIds: [P1, P2], ruleSet });
+    // 3ゲーム目も引き分け → 両者同時に3勝到達
+    const result = await service.recordWins({ sessionId: session.id, winnerIds: [P1, P2], ruleSet });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.status).toBe("finished");
+    expect(result.value.winnerIds).toEqual([P1, P2]); // 複数人勝利
+    expect(result.value.winnerId).toBe(P1);           // 後方互換: 先頭
+    // 両者ともwinsがきちんと3になっている（2人目のカウント漏れ回帰確認）
+    expect(result.value.players.find(p => p.playerId === P1)?.wins).toBe(3);
+    expect(result.value.players.find(p => p.playerId === P2)?.wins).toBe(3);
+  });
+
+  it("引き分けで片方だけが3勝到達した場合、その1人が勝者でもう1人のwinsも加算される", async () => {
+    const storage = new InMemorySessionStorage();
+    const service = new SessionService(storage);
+
+    const startResult = await service.startSession({
+      roomId:    "room-a6b",
+      sessionId: "session-a6b",
+      players: [
+        { playerId: P1, strategyId: "Zero" },
+        { playerId: P2, strategyId: "Zero" },
+      ],
+      ruleSetId: "basic",
+      ruleSet,
+    });
+    expect(startResult.ok).toBe(true);
+    if (!startResult.ok) return;
+    const { session } = startResult.value;
+
+    // P1: 2勝、P2: 1勝
+    await service.recordWin({ sessionId: session.id, winnerId: P1, ruleSet });
+    await service.recordWin({ sessionId: session.id, winnerId: P1, ruleSet });
+    await service.recordWin({ sessionId: session.id, winnerId: P2, ruleSet });
+    // 引き分け（両者勝利）→ P1のみ3勝到達
+    const result = await service.recordWins({ sessionId: session.id, winnerIds: [P1, P2], ruleSet });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.status).toBe("finished");
+    expect(result.value.winnerIds).toEqual([P1]); // 到達したのはP1だけ
+    // P2の勝利数もきちんと2になっている（旧実装ではSESSION_NOT_IN_PROGRESSで消えていた）
+    expect(result.value.players.find(p => p.playerId === P2)?.wins).toBe(2);
   });
 
   it("2勝ではセッションは継続中のまま", async () => {

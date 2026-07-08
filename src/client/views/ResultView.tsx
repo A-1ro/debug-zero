@@ -60,11 +60,21 @@ export function ResultView() {
   // Sort players by wins desc
   const sorted: SessionPlayer[] = [...session.players].sort((a, b) => b.wins - a.wins);
 
-  // W-1: derive winnerName from winnerPlayer to avoid split-brain between the two lookups
-  const winnerPlayer = session.winnerId
-    ? session.players.find((p) => p.playerId === session.winnerId) ?? null
+  // A6: multiple players can win the session simultaneously (winnerIds).
+  // Fall back to the single winnerId for sessions recorded before winnerIds existed.
+  const winnerIds: PlayerId[] = session.winnerIds?.length
+    ? session.winnerIds
+    : session.winnerId
+      ? [session.winnerId]
+      : [];
+  // W-1: derive names from winnerPlayers to avoid split-brain between lookups
+  const winnerPlayers: SessionPlayer[] = winnerIds
+    .map((id) => session.players.find((p) => p.playerId === id))
+    .filter((p): p is SessionPlayer => p !== undefined);
+  const winnerPlayer = winnerPlayers[0] ?? null;
+  const winnerName = winnerPlayers.length > 0
+    ? winnerPlayers.map((p) => playerName(p.playerId, room)).join(" & ")
     : null;
-  const winnerName = winnerPlayer ? playerName(winnerPlayer.playerId, room) : null;
   const totalGames = session.gameIds.length;
 
   // W-3: stable callbacks to avoid unnecessary re-renders of button subtrees
@@ -108,18 +118,25 @@ export function ResultView() {
             <div className={`${s.winnerCorner} ${s.wcBL}`} aria-hidden="true" />
             <div className={`${s.winnerCorner} ${s.wcBR}`} aria-hidden="true" />
 
-            <div className={s.winnerTag}>▶ Session Winner</div>
+            <div className={s.winnerTag}>
+              {winnerPlayers.length > 1 ? "▶ Session Winners" : "▶ Session Winner"}
+            </div>
 
             {winnerName ? (
               <>
                 <div className={s.winnerName}>{winnerName}</div>
                 <div className={s.winnerSubtitle}>
-                  {winnerPlayer?.wins ?? 0} wins — First to reach target
+                  {winnerPlayer?.wins ?? 0} wins —{" "}
+                  {winnerPlayers.length > 1
+                    ? "Simultaneous target reach"
+                    : "First to reach target"}
                 </div>
-                {winnerPlayer && (
+                {winnerPlayers.length > 0 && (
                   <div className={s.winnerStrategy}>
                     Strategy Revealed:{" "}
-                    <span className={s.strategyRevealed}>{winnerPlayer.strategyId}</span>
+                    <span className={s.strategyRevealed}>
+                      {winnerPlayers.map((p) => p.strategyId).join(" / ")}
+                    </span>
                   </div>
                 )}
               </>
@@ -141,7 +158,7 @@ export function ResultView() {
 
             {sorted.map((sp, idx) => {
               const rank      = idx + 1;
-              const isWinner  = sp.playerId === session.winnerId;
+              const isWinner  = winnerIds.includes(sp.playerId);
               const name      = playerName(sp.playerId, room);
 
               return (

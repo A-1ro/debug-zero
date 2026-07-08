@@ -138,9 +138,10 @@ export function reducer(state: GameState, action: Action): GameState {
       const session = state.session
         ? {
             ...state.session,
-            status:   "finished" as const,
-            winnerId: msg.payload.winnerId,
-            players:  msg.payload.players,
+            status:    "finished" as const,
+            winnerId:  msg.payload.winnerId,
+            winnerIds: msg.payload.winnerIds ?? (msg.payload.winnerId ? [msg.payload.winnerId] : []),
+            players:   msg.payload.players,
           }
         : state.session;
       return { ...state, session, error: null };

@@ -80,7 +80,11 @@ export interface Session {
   gameIds:          GameId[];
   currentGameIndex: number;
   status:           SessionStatus;
+  /** First session winner (kept for backward compatibility; = winnerIds[0]). */
   winnerId?:        PlayerId;
+  /** All session winners — multiple players can reach winsRequired in the
+   *  same game (showdown tie / raid exact-zero). Owner ruling A6. */
+  winnerIds?:       PlayerId[];
 }
 
 // ============================================================

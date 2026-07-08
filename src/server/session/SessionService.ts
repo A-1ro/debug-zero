@@ -440,15 +440,19 @@ export class SessionService {
   }
 
   /**
-   * Record a win for a player and check if the session is over.
-   * Returns the updated session (and sets winnerId if session is finished).
+   * Record wins for every winner of a single game, then check if the session
+   * is over. A game can have multiple winners (showdown tie / raid exact-zero),
+   * and several of them may reach winsRequired simultaneously — in that case
+   * ALL of them become session winners (owner ruling A6). All wins are counted
+   * BEFORE the threshold check so no winner's win is dropped.
+   * Returns the updated session (sets winnerIds/winnerId when finished).
    */
-  async recordWin(params: {
+  async recordWins(params: {
     sessionId: SessionId;
-    winnerId: PlayerId;
+    winnerIds: PlayerId[];
     ruleSet: RuleSet;
   }): Promise<SessionResult<Session>> {
-    const { sessionId, winnerId, ruleSet } = params;
+    const { sessionId, winnerIds, ruleSet } = params;
 
     const session = await this.storage.getSession(sessionId);
     if (!session) {
@@ -458,25 +462,47 @@ export class SessionService {
       return fail(SESSION_NOT_IN_PROGRESS, "Session is already finished");
     }
 
+    // 1. Count every winner's win first
     const updatedPlayers = session.players.map((sp) =>
-      sp.playerId === winnerId ? { ...sp, wins: sp.wins + 1 } : sp
+      winnerIds.includes(sp.playerId) ? { ...sp, wins: sp.wins + 1 } : sp
     );
 
-    const winner = updatedPlayers.find((sp) => sp.playerId === winnerId);
-    const sessionFinished =
-      winner !== undefined && winner.wins >= ruleSet.winCondition.winsRequired;
+    // 2. Then extract ALL players who reached the required wins
+    const sessionWinners = updatedPlayers
+      .filter(
+        (sp) =>
+          winnerIds.includes(sp.playerId) &&
+          sp.wins >= ruleSet.winCondition.winsRequired
+      )
+      .map((sp) => sp.playerId);
 
     const updatedSession: Session = {
       ...session,
       players: updatedPlayers,
-      ...(sessionFinished
-        ? { status: "finished" as SessionStatus, winnerId }
+      ...(sessionWinners.length > 0
+        ? {
+            status: "finished" as SessionStatus,
+            winnerId: sessionWinners[0], // backward compatibility
+            winnerIds: sessionWinners,
+          }
         : {}),
     };
 
     await this.storage.saveSession(updatedSession);
 
     return ok(updatedSession);
+  }
+
+  /**
+   * Record a win for a single player (thin wrapper over recordWins).
+   */
+  async recordWin(params: {
+    sessionId: SessionId;
+    winnerId: PlayerId;
+    ruleSet: RuleSet;
+  }): Promise<SessionResult<Session>> {
+    const { sessionId, winnerId, ruleSet } = params;
+    return this.recordWins({ sessionId, winnerIds: [winnerId], ruleSet });
   }
 
   /**
