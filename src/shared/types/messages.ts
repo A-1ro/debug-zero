@@ -183,7 +183,10 @@ export interface GameEndedPayload {
 
 export interface SessionEndedPayload {
   sessionId: SessionId;
+  /** First winner (backward compatibility; = winnerIds[0], "" when boss wins). */
   winnerId:  PlayerId;
+  /** All session winners (A6: simultaneous winsRequired reach → multiple winners). */
+  winnerIds: PlayerId[];
   players:   SessionPlayer[];
 }
 

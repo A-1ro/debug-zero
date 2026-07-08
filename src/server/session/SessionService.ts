@@ -102,12 +102,19 @@ function cardValueFromId(cardId: CardId): number {
 // ============================================================
 
 /**
- * Determines initial turn order.
- * Each player "draws" the top card; the player with the highest value goes first.
- * Ties are broken by player order in the input array (earlier index = higher priority).
+ * Determines initial turn order (detail-design.md §5.2-1: 各プレイヤーが1枚引いて
+ * 最大値のプレイヤーが先攻、時計回り).
+ * Each player "draws" the top card; the player with the highest value goes
+ * first, and the rest follow CLOCKWISE in seating order (= the order of the
+ * input playerIds array, i.e. room join order) — NOT sorted by drawn value.
+ * Tie for the highest value: the tied player earliest in seating order goes
+ * first (the rule documents specify no tie-break; seating order is used as
+ * the authoritative interpretation, recorded here).
  * Returns [turnOrder, updatedDeck] — the drawn cards are returned to the deck.
+ *
+ * Exported for unit testing (pure function).
  */
-function determineTurnOrder(
+export function determineTurnOrder(
   playerIds: PlayerId[],
   deck: CardId[],
   rng: () => number
@@ -127,9 +134,17 @@ function determineTurnOrder(
     drawn.push({ playerId, cardId, value: cardValueFromId(cardId) });
   }
 
-  // Sort by value descending; ties keep original order (stable)
-  const sorted = [...drawn].sort((a, b) => b.value - a.value);
-  const turnOrder = sorted.map((d) => d.playerId);
+  // Highest drawn value leads (ties: the first max encountered wins = earliest seating order)
+  const firstIdx = drawn.reduce(
+    (best, d, idx) => (d.value > drawn[best].value ? idx : best),
+    0
+  );
+
+  // Rotate the seating order so the winner leads; the rest follow clockwise
+  const turnOrder = [
+    ...playerIds.slice(firstIdx),
+    ...playerIds.slice(0, firstIdx),
+  ];
 
   // Return drawn cards to the bottom of the deck (they are effectively "used" for ordering only)
   // Per spec: drawn cards are put back and deck is reshuffled before dealing hands
@@ -425,15 +440,19 @@ export class SessionService {
   }
 
   /**
-   * Record a win for a player and check if the session is over.
-   * Returns the updated session (and sets winnerId if session is finished).
+   * Record wins for every winner of a single game, then check if the session
+   * is over. A game can have multiple winners (showdown tie / raid exact-zero),
+   * and several of them may reach winsRequired simultaneously — in that case
+   * ALL of them become session winners (owner ruling A6). All wins are counted
+   * BEFORE the threshold check so no winner's win is dropped.
+   * Returns the updated session (sets winnerIds/winnerId when finished).
    */
-  async recordWin(params: {
+  async recordWins(params: {
     sessionId: SessionId;
-    winnerId: PlayerId;
+    winnerIds: PlayerId[];
     ruleSet: RuleSet;
   }): Promise<SessionResult<Session>> {
-    const { sessionId, winnerId, ruleSet } = params;
+    const { sessionId, winnerIds, ruleSet } = params;
 
     const session = await this.storage.getSession(sessionId);
     if (!session) {
@@ -443,25 +462,47 @@ export class SessionService {
       return fail(SESSION_NOT_IN_PROGRESS, "Session is already finished");
     }
 
+    // 1. Count every winner's win first
     const updatedPlayers = session.players.map((sp) =>
-      sp.playerId === winnerId ? { ...sp, wins: sp.wins + 1 } : sp
+      winnerIds.includes(sp.playerId) ? { ...sp, wins: sp.wins + 1 } : sp
     );
 
-    const winner = updatedPlayers.find((sp) => sp.playerId === winnerId);
-    const sessionFinished =
-      winner !== undefined && winner.wins >= ruleSet.winCondition.winsRequired;
+    // 2. Then extract ALL players who reached the required wins
+    const sessionWinners = updatedPlayers
+      .filter(
+        (sp) =>
+          winnerIds.includes(sp.playerId) &&
+          sp.wins >= ruleSet.winCondition.winsRequired
+      )
+      .map((sp) => sp.playerId);
 
     const updatedSession: Session = {
       ...session,
       players: updatedPlayers,
-      ...(sessionFinished
-        ? { status: "finished" as SessionStatus, winnerId }
+      ...(sessionWinners.length > 0
+        ? {
+            status: "finished" as SessionStatus,
+            winnerId: sessionWinners[0], // backward compatibility
+            winnerIds: sessionWinners,
+          }
         : {}),
     };
 
     await this.storage.saveSession(updatedSession);
 
     return ok(updatedSession);
+  }
+
+  /**
+   * Record a win for a single player (thin wrapper over recordWins).
+   */
+  async recordWin(params: {
+    sessionId: SessionId;
+    winnerId: PlayerId;
+    ruleSet: RuleSet;
+  }): Promise<SessionResult<Session>> {
+    const { sessionId, winnerId, ruleSet } = params;
+    return this.recordWins({ sessionId, winnerIds: [winnerId], ruleSet });
   }
 
   /**

@@ -82,7 +82,7 @@ describe("autoActionFor — raid phase", () => {
     hands: { [P1]: ["9-001", "2-001"], [P2]: ["7-001", "1-001"] },
     raidState: {
       bossPlayerId: P2, bossHP: 14, playerHPs: { [P1]: 10 },
-      activeBugId: "", roundIndex: 0, turnOrder: [P1, P2], currentTurnIndex: 0,
+      activeBugId: "", roundIndex: 1, turnOrder: [P1, P2], currentTurnIndex: 0,
       bossActionsLeft: 1,
     },
     ...overrides,
@@ -97,7 +97,7 @@ describe("autoActionFor — raid phase", () => {
     const g = raidBase({
       raidState: {
         bossPlayerId: P2, bossHP: 14, playerHPs: { [P1]: 10 },
-        activeBugId: "", roundIndex: 0, turnOrder: [P1, P2], currentTurnIndex: 1,
+        activeBugId: "", roundIndex: 1, turnOrder: [P1, P2], currentTurnIndex: 1,
         bossActionsLeft: 1,
       },
     });

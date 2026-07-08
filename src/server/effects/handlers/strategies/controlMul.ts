@@ -1,6 +1,6 @@
 import type { Game, GamePatch } from "../../../../shared/types/effects";
 import type { EffectContext } from "../../../../shared/types/effects";
-import { undoOperation, applyOperation, newEventId } from "../_utils";
+import { preCardSetNumber, applyOperation, newEventId } from "../_utils";
 
 /**
  * Control-Mul strategy effect handler.
@@ -25,7 +25,7 @@ export function controlMul(game: Game, ctx: EffectContext): GamePatch {
   if (lastField.operation !== "div") return {};
 
   const newOp = "mul" as const;
-  const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
+  const prevSetNumber = preCardSetNumber(ctx, game.setNumber, lastField.operation, lastField.effectiveValue);
   const newSetNumber = applyOperation(prevSetNumber, newOp, lastField.effectiveValue);
 
   const updatedField = [...game.field];

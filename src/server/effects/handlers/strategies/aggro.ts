@@ -1,6 +1,6 @@
 import type { Game, GamePatch } from "../../../../shared/types/effects";
 import type { EffectContext } from "../../../../shared/types/effects";
-import { undoOperation, applyOperation } from "../_utils";
+import { preCardSetNumber, applyOperation } from "../_utils";
 
 /**
  * Aggro strategy effect handler.
@@ -27,7 +27,7 @@ export function aggro(game: Game, ctx: EffectContext): GamePatch {
   // Engine already applied this — no-op if already correct
   if (lastField.effectiveValue === newEffectiveValue) return {};
 
-  const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
+  const prevSetNumber = preCardSetNumber(ctx, game.setNumber, lastField.operation, lastField.effectiveValue);
   const newSetNumber = applyOperation(prevSetNumber, lastField.operation, newEffectiveValue);
 
   const updatedField = [...game.field];

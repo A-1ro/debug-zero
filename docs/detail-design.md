@@ -1217,7 +1217,12 @@ interface EffectRegistry {
 #### Aggro (`basic:aggro`)
 - **トリガー**: `on_card_played`（自分がカードを出した時）
 - **処理**: `fieldCard.effectiveValue = fieldCard.rawValue * 2`
-- **マイナス判定**: アクション適用後に `game.setNumber < 0` かつ Aggro プレイヤーが原因の場合、そのプレイヤーを即時敗北（`game.status = "finished"`, winnerId は他プレイヤー全員）
+- **マイナス判定（バースト）**: アクション適用後に `game.setNumber < 0` かつ Aggro プレイヤーが原因の場合、そのプレイヤーは**敗北して脱落**する（この時点では勝者は決まらない）。処理内容:
+  - バーストしたプレイヤーを `turnOrder` から除外し、手札をクリアする（`player_eliminated` イベントを記録）
+  - バーストの原因カードを場から取り除いて `excludedCards` へ移し、`setNumber` をカードプレイ前の値に巻き戻す
+  - 生存者が2人以上ならゲームは**続行**する
+  - 生存者が1人になった場合のみ、その1人が勝利してゲーム終了（`game.status = "finished"`, `winnerId` = 最後の生存者, reason = `last_player_standing`）
+  - ※ Aggro 以外のプレイヤーが `setNumber` を負にするのは合法で、ゲームは通常どおり続行する
 - **Aggro-Forbidden との相互作用**: バグ有効時はハンドラをスキップし `effectiveValue = rawValue`
 
 #### Control-Add / Control-Sub (`basic:controlAdd` 等)
@@ -1463,8 +1468,8 @@ describe("ArithmeticJudge", () => {
   test("除算: setNumber=7, card=2 → ceil(7/2) = 4");
   // Aggro 適用後
   test("Aggro有効: card=3 → effectiveValue=6 で計算");
-  // Aggro マイナス敗北
-  test("Aggro有効かつ結果がマイナス: 即時敗北フラグが立つ");
+  // Aggro マイナス敗北（バースト脱落）
+  test("Aggro有効かつ結果がマイナス: Aggroプレイヤーが脱落しゲームは続行する（生存者1人なら勝利確定）");
   // Value-Corruption 適用後
   test("Value-Corruption有効: card=3 → effectiveValue=10 で計算");
 });
@@ -1487,7 +1492,7 @@ describe("ArithmeticJudge", () => {
 | ハンドラ | テストケース |
 |---|---|
 | aggro | effectiveValue が 2 倍になること |
-| aggro | マイナスになった場合に敗北 GamePatch が返ること |
+| aggro | マイナスになった場合にプレイヤーが脱落しゲームが続行すること（GameEngine のバースト分岐との結合） |
 | controlAdd | fieldCard.operation が sub → add に変わること |
 | controlAdd | 2 回目の使用で usedStrategyCounts の値が上限に達していること（Validator との結合） |
 | hack | fieldCard.playerId が奪ったプレイヤーに変わること |

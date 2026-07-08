@@ -213,7 +213,7 @@ describe("validate remove_bug", () => {
       raidState: {
         bossPlayerId: P2, bossHP: 10,
         playerHPs: { [P1]: 2, [P2]: 5 },
-        activeBugId: "Odd-Forbidden", roundIndex: 0,
+        activeBugId: "Odd-Forbidden", roundIndex: 1,
         turnOrder: [P1], currentTurnIndex: 0, bossActionsLeft: 1,
       },
     });
@@ -228,7 +228,7 @@ describe("validate remove_bug", () => {
       raidState: {
         bossPlayerId: P2, bossHP: 10,
         playerHPs: { [P1]: 5, [P2]: 5 },
-        activeBugId: "Odd-Forbidden", roundIndex: 0,
+        activeBugId: "Odd-Forbidden", roundIndex: 1,
         turnOrder: [P1], currentTurnIndex: 0, bossActionsLeft: 1,
       },
     });

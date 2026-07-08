@@ -882,17 +882,21 @@ export class RoomDurableObject implements DurableObject {
       ...(game.winnerIds?.length ? { winnerIds: game.winnerIds } : {}),
     };
 
-    // Record a win for every winner (showdown ties can produce multiple winners)
+    // Record wins for every winner in ONE call (showdown ties / raid exact-zero
+    // can produce multiple winners). Calling recordWin per winner dropped the
+    // 2nd winner's win when the 1st reached winsRequired (session finished →
+    // SESSION_NOT_IN_PROGRESS); recordWins counts all wins first and makes
+    // every simultaneous reacher a session winner (A6).
     const winners = game.winnerIds?.length
       ? game.winnerIds
       : game.winnerId
         ? [game.winnerId]
         : [];
     let updatedSession = session;
-    for (const winnerId of winners) {
-      const res = await this.sessionService.recordWin({
+    if (winners.length > 0) {
+      const res = await this.sessionService.recordWins({
         sessionId: session.id,
-        winnerId,
+        winnerIds: winners,
         ruleSet,
       });
       if (res.ok) updatedSession = res.value;
@@ -934,6 +938,8 @@ export class RoomDurableObject implements DurableObject {
         payload: {
           sessionId: session.id,
           winnerId: updatedSession.winnerId ?? "",
+          winnerIds: updatedSession.winnerIds
+            ?? (updatedSession.winnerId ? [updatedSession.winnerId] : []),
           players: updatedSession.players,
         },
         visibility: "all",
