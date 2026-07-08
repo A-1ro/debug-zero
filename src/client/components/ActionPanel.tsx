@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { CardId, Operation, Action, PhaseId, Room, PlayerId } from "../../shared/types/domain";
+import type { InterventionOffer } from "../hooks/useGameState";
 import s from "./ActionPanel.module.css";
 
 interface Props {
@@ -7,6 +8,10 @@ interface Props {
   phase:               PhaseId;
   isMyTurn:            boolean;
   resetOrRaidPending:  boolean;
+  /** A1: private intervention offer addressed to this player */
+  interventionOffer?:  InterventionOffer | null;
+  /** A1: the game is frozen waiting for intervention responses */
+  interventionPending?: boolean;
   selectedCardId:      CardId | null;
   /** Showdown: up to 2 selected cards */
   selectedCardIds?:    CardId[];
@@ -29,11 +34,80 @@ const OPS: { op: Operation; symbol: string }[] = [
   { op: "div", symbol: "÷" },
 ];
 
+/**
+ * A1: "activate your strategy?" prompt with a countdown. The server times the
+ * window authoritatively (5s) — this countdown is display only.
+ */
+function InterventionPrompt({
+  offer,
+  onAction,
+}: {
+  offer: InterventionOffer;
+  onAction: (action: Action) => void;
+}) {
+  const [responded, setResponded] = useState(false);
+  const [remainingMs, setRemainingMs] = useState(() => Math.max(0, offer.deadline - Date.now()));
+
+  useEffect(() => {
+    setResponded(false);
+    setRemainingMs(Math.max(0, offer.deadline - Date.now()));
+    const timer = setInterval(() => {
+      setRemainingMs(Math.max(0, offer.deadline - Date.now()));
+    }, 100);
+    return () => clearInterval(timer);
+  }, [offer.deadline]);
+
+  const respond = (activate: boolean) => {
+    if (responded) return;
+    setResponded(true);
+    onAction({ type: "intervention_response", activate });
+  };
+
+  if (responded) {
+    return (
+      <div className={s.container}>
+        <div className={s.hintText}>Response sent — waiting for resolution...</div>
+      </div>
+    );
+  }
+
+  const seconds = (remainingMs / 1000).toFixed(1);
+  const expired = remainingMs <= 0;
+
+  return (
+    <div className={s.container}>
+      <div className={s.hintText}>
+        ⚡ {offer.strategyId} — activate on card {offer.triggerCard.rawValue}? ({seconds}s)
+      </div>
+      <div className={s.actionsRow}>
+        <button
+          type="button"
+          className={`${s.btn} ${s.btnPlay}`}
+          disabled={expired}
+          onClick={() => respond(true)}
+        >
+          ⚡ ACTIVATE
+        </button>
+        <button
+          type="button"
+          className={`${s.btn} ${s.btnDraw}`}
+          disabled={expired}
+          onClick={() => respond(false)}
+        >
+          ✕ PASS
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ActionPanel({
   hand,
   phase,
   isMyTurn,
   resetOrRaidPending,
+  interventionOffer,
+  interventionPending,
   selectedCardId,
   selectedCardIds = [],
   hasSubmitted = false,
@@ -75,6 +149,21 @@ export function ActionPanel({
       setSelectedTarget(isBossTurn ? "" as PlayerId : "boss");
     }
   }, [isBossTurn, phase]);
+
+  // A1: intervention offer prompt takes priority — the offeree is NOT the turn
+  // player, so this must render before the isMyTurn guard.
+  if (interventionOffer) {
+    return <InterventionPrompt offer={interventionOffer} onAction={onAction} />;
+  }
+
+  // A1: the game is frozen while someone else decides — block all actions
+  if (interventionPending) {
+    return (
+      <div className={s.container}>
+        <div className={s.hintText}>⚡ Resolving interventions...</div>
+      </div>
+    );
+  }
 
   // Showdown: no turn order — every surviving player submits 1-2 cards + operation.
   // Placed before the isMyTurn guard because isMyTurn is meaningless here.

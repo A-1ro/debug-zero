@@ -1,15 +1,25 @@
 import { useReducer, useCallback } from "react";
-import type { Room, Session, GameView } from "../../shared/types/domain";
+import type { Room, Session, GameView, FieldCard, StrategyId } from "../../shared/types/domain";
 import type { ServerMessage } from "../../shared/types/messages";
 
 // ============================================================
 // State shape
 // ============================================================
 
+/** A1: a private intervention offer addressed to this player. */
+export interface InterventionOffer {
+  triggerCard: FieldCard;
+  strategyId:  StrategyId;
+  timeoutMs:   number;
+  deadline:    number;
+}
+
 export interface GameState {
   room:    Room     | null;
   session: Session  | null;
   game:    GameView | null;
+  /** A1: set while this player holds an unanswered intervention offer. */
+  interventionOffer: InterventionOffer | null;
   error:   { code: string; message: string; recoverable: boolean } | null;
 }
 
@@ -17,6 +27,7 @@ const initialState: GameState = {
   room:    null,
   session: null,
   game:    null,
+  interventionOffer: null,
   error:   null,
 };
 
@@ -86,7 +97,7 @@ export function reducer(state: GameState, action: Action): GameState {
     case "server:action_result": {
       if (!state.game) return state;
       const { deckCount, events, fieldCard, fieldOverride, newSetNumber, handCounts,
-              turnOrder, currentTurnIndex } = msg.payload;
+              turnOrder, currentTurnIndex, interventionPending } = msg.payload;
       const newField = fieldOverride !== undefined
         ? fieldOverride
         : fieldCard
@@ -94,12 +105,16 @@ export function reducer(state: GameState, action: Action): GameState {
           : state.game.field;
       return {
         ...state,
+        // A1: once the freeze lifts (all candidates responded / timed out),
+        // any offer still shown locally is stale — drop it
+        interventionOffer: interventionPending ? state.interventionOffer : null,
         game: {
           ...state.game,
           deckCount,
           setNumber:        newSetNumber ?? state.game.setNumber,
           field:            newField,
           handCounts:       handCounts ?? state.game.handCounts,
+          interventionPending: interventionPending ?? false,
           // Server is the single source of truth for turn state — never guess here
           // (zero-card keeps the turn, reset rewinds to 0, eliminations shrink turnOrder)
           turnOrder:        turnOrder ?? state.game.turnOrder,
@@ -108,6 +123,17 @@ export function reducer(state: GameState, action: Action): GameState {
         },
       };
     }
+
+    case "server:intervention_offer":
+      return {
+        ...state,
+        interventionOffer: {
+          triggerCard: msg.payload.triggerCard,
+          strategyId:  msg.payload.strategyId,
+          timeoutMs:   msg.payload.timeoutMs,
+          deadline:    msg.payload.deadline,
+        },
+      };
 
     case "server:phase_changed": {
       if (!state.game) return state;
@@ -153,6 +179,9 @@ export function reducer(state: GameState, action: Action): GameState {
         room:    msg.payload.room,
         session: msg.payload.session,
         game:    msg.payload.game,
+        // A private offer cannot be reconstructed from state_sync — the server
+        // will time it out as a pass if it is still open
+        interventionOffer: null,
         error:   null,
       };
 
