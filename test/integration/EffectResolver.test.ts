@@ -65,43 +65,59 @@ function makeGame(overrides: Partial<Game> = {}): Game {
   };
 }
 
+// A1: 介入系（on_card_played_by_other）は自動発動ではなく
+// collectInterventionCandidates（候補列挙）→ applyIntervention（accept時のみ適用）の2段。
 describe("使用回数制限（A7: 1ゲーム1回）", () => {
-  it("上限到達済みのControl-Subは発動しない", () => {
+  it("上限到達済みのControl-Subは候補に上がらない", () => {
     const card = fieldCard(3, "add", P1); // P2のControl-Subの対象
     const game = makeGame({
       field: [card],
       setNumber: 13,
       usedStrategyCounts: { [P1]: {}, [P2]: { "Control-Sub": 1 }, [P3]: {} },
     });
-    const patch = resolver.resolve(
-      game, "on_card_played_by_other",
+    const candidates = resolver.collectInterventionCandidates(
+      game,
       { actorId: P1, triggerCard: card, ruleSet },
       { [P2]: "Control-Sub" as StrategyId }
     );
-    expect(patch.field).toBeUndefined(); // 発動していない
+    expect(candidates).toEqual([]);
   });
 
-  it("初回発動でEffectResolverがカウントを1にする（中央集計）", () => {
+  it("発動（applyIntervention）でカウントが1になる（中央集計）", () => {
     const card = fieldCard(3, "add", P1);
     const game = makeGame({ field: [card], setNumber: 13 });
-    const patch = resolver.resolve(
-      game, "on_card_played_by_other",
-      { actorId: P1, triggerCard: card, ruleSet },
-      { [P2]: "Control-Sub" as StrategyId }
+    const ctx = { actorId: P1, triggerCard: card, ruleSet };
+
+    const candidates = resolver.collectInterventionCandidates(
+      game, ctx, { [P2]: "Control-Sub" as StrategyId }
     );
+    expect(candidates).toEqual([{ playerId: P2, strategyId: "Control-Sub" }]);
+
+    const patch = resolver.applyIntervention(game, P2, "Control-Sub" as StrategyId, ctx);
     expect(patch.field![0].operation).toBe("sub");
     expect(patch.usedStrategyCounts![P2]["Control-Sub"]).toBe(1);
   });
 
-  it("no-op（対象外カード）では使用回数を消費しない", () => {
+  it("対象外カードはそもそも候補に上がらない", () => {
     const card = fieldCard(3, "mul", P1); // Control-Subの対象はaddのみ
     const game = makeGame({ field: [card], setNumber: 30 });
-    const patch = resolver.resolve(
-      game, "on_card_played_by_other",
+    const candidates = resolver.collectInterventionCandidates(
+      game,
       { actorId: P1, triggerCard: card, ruleSet },
       { [P2]: "Control-Sub" as StrategyId }
     );
-    expect(patch.usedStrategyCounts).toBeUndefined();
+    expect(candidates).toEqual([]);
+  });
+
+  it("発動後no-op（対象カード消滅等）では使用回数を消費しない", () => {
+    // オファー時は対象だったが、解決時点でフィールドから消えているケース
+    const card = fieldCard(3, "add", P1);
+    const game = makeGame({ field: [], setNumber: 10 }); // カードは既に除去済み
+    const patch = resolver.applyIntervention(
+      game, P2, "Control-Sub" as StrategyId,
+      { actorId: P1, triggerCard: card, ruleSet }
+    );
+    expect(patch).toEqual({});
   });
 });
 
@@ -138,20 +154,31 @@ describe("alwaysトリガーのバグ（A8: Value-Corruption）", () => {
 });
 
 describe("効果の逐次合成（後勝ち上書きの回帰テスト）", () => {
-  it("TrickStar除去後のControl系は除去済みフィールドを見る", () => {
-    // P1が奇数カード(3, add)を出す → P2のTrickStarが除去(no-op以外)、
-    // P3のControl-Subは「除去後のフィールド」を対象にすべきで、
-    // 除去されたカードへのoperation変更でフィールドを復活させてはいけない
+  it("両者が発動を選んだ場合、TrickStar除去後のControl系は除去済みフィールドを見る", () => {
+    // P1が奇数カード(3, add)を出す → P2のTrickStarとP3のControl-Subが両方accept。
+    // 手番順（actorの次から）で P2 → P3 と解決され、P3のControl-Subは
+    // 「除去後のフィールド」を対象にすべきで、除去されたカードへの
+    // operation変更でフィールドを復活させてはいけない（no-op＝権利も不消費）
     const card = fieldCard(3, "add", P1);
     const game = makeGame({ field: [card], setNumber: 13 });
-    const patch = resolver.resolve(
-      game, "on_card_played_by_other",
-      { actorId: P1, triggerCard: card, ruleSet },
-      { [P2]: "TrickStar" as StrategyId, [P3]: "Control-Sub" as StrategyId }
-    );
-    const after = applyPatch(game, patch);
+    const ctx = { actorId: P1, triggerCard: card, ruleSet };
+    const strategies = { [P2]: "TrickStar" as StrategyId, [P3]: "Control-Sub" as StrategyId };
+
+    const candidates = resolver.collectInterventionCandidates(game, ctx, strategies);
+    // 候補順は手番順（P1の次 = P2 → P3）
+    expect(candidates.map(c => c.playerId)).toEqual([P2, P3]);
+
+    // 両者acceptを候補順に解決（GameEngine.applyInterventionResponse と同じ流れ）
+    let after = game;
+    for (const c of candidates) {
+      after = applyPatch(after, resolver.applyIntervention(after, c.playerId, c.strategyId, ctx));
+    }
+
     // TrickStarの除去が最終状態に残る（Control-Subの上書きで復活しない）
     expect(after.field).toHaveLength(0);
+    // no-opになったControl-Subの権利は消費されない
+    expect(after.usedStrategyCounts[P2]?.["TrickStar"]).toBe(1);
+    expect(after.usedStrategyCounts[P3]?.["Control-Sub"]).toBeUndefined();
   });
 });
 
