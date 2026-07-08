@@ -168,3 +168,10 @@
   letter-spacing: 0.2em;
   margin-top: 8px;
 }
+
+.raidDice {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+  margin-top: 6px;
+}

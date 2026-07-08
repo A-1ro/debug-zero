@@ -1,5 +1,5 @@
 import { useReducer, useCallback } from "react";
-import type { Room, Session, GameView, FieldCard, StrategyId } from "../../shared/types/domain";
+import type { Room, Session, GameView, FieldCard, StrategyId, BugId } from "../../shared/types/domain";
 import type { ServerMessage } from "../../shared/types/messages";
 
 // ============================================================
@@ -14,12 +14,22 @@ export interface InterventionOffer {
   deadline:    number;
 }
 
+/** D2: a private "choose this raid round's bug" offer addressed to the boss. */
+export interface BossBugChoiceOffer {
+  roundIndex: number;
+  candidates: BugId[];
+  timeoutMs:  number;
+  deadline:   number;
+}
+
 export interface GameState {
   room:    Room     | null;
   session: Session  | null;
   game:    GameView | null;
   /** A1: set while this player holds an unanswered intervention offer. */
   interventionOffer: InterventionOffer | null;
+  /** D2: set while the boss holds an unanswered raid-bug choice offer. */
+  bossBugChoice: BossBugChoiceOffer | null;
   error:   { code: string; message: string; recoverable: boolean } | null;
 }
 
@@ -28,6 +38,7 @@ const initialState: GameState = {
   session: null,
   game:    null,
   interventionOffer: null,
+  bossBugChoice: null,
   error:   null,
 };
 
@@ -135,6 +146,18 @@ export function reducer(state: GameState, action: Action): GameState {
         },
       };
 
+    case "server:boss_bug_choice":
+      // D2: private offer to the boss to pick this round's bug.
+      return {
+        ...state,
+        bossBugChoice: {
+          roundIndex: msg.payload.roundIndex,
+          candidates: msg.payload.candidates,
+          timeoutMs:  msg.payload.timeoutMs,
+          deadline:   msg.payload.deadline,
+        },
+      };
+
     case "server:phase_changed": {
       if (!state.game) return state;
       const { reason } = msg.payload;
@@ -180,8 +203,9 @@ export function reducer(state: GameState, action: Action): GameState {
         session: msg.payload.session,
         game:    msg.payload.game,
         // A private offer cannot be reconstructed from state_sync — the server
-        // will time it out as a pass if it is still open
+        // will time it out (pass / random fallback) if it is still open
         interventionOffer: null,
+        bossBugChoice:     null,
         error:   null,
       };
 
@@ -195,10 +219,26 @@ export function reducer(state: GameState, action: Action): GameState {
         },
       };
 
-    case "server:raid_round_started":
-      // Phase display only — no state update needed at this layer
-      return state;
+    case "server:raid_round_started": {
+      // D2/D3: a new raid round began. The boss's bug choice (if any) is now
+      // resolved — drop any offer still shown locally. Also refresh the raid
+      // display with this round's diced turn order + chosen bug so multi-round
+      // raids stay current (raidState is otherwise only set at phase change).
+      const { roundIndex, activeBugId, turnOrder, diceResults } = msg.payload;
+      const raidState = state.game?.raidState
+        ? { ...state.game.raidState, roundIndex, activeBugId, turnOrder, diceResults,
+            awaitingBugChoice: false }
+        : state.game?.raidState;
+      return {
+        ...state,
+        bossBugChoice: null,
+        game: state.game ? { ...state.game, raidState } : state.game,
+      };
+    }
   }
+
+  // Unknown / future message types leave state untouched.
+  return state;
 }
 
 // ============================================================

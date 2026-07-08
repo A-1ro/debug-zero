@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { CardId, Operation, Action, PhaseId, Room, PlayerId } from "../../shared/types/domain";
-import type { InterventionOffer } from "../hooks/useGameState";
+import type { InterventionOffer, BossBugChoiceOffer } from "../hooks/useGameState";
 import s from "./ActionPanel.module.css";
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
   resetOrRaidPending:  boolean;
   /** A1: private intervention offer addressed to this player */
   interventionOffer?:  InterventionOffer | null;
+  /** D2: private raid-bug choice offer addressed to the boss */
+  bossBugChoice?:      BossBugChoiceOffer | null;
   /** A1: the game is frozen waiting for intervention responses */
   interventionPending?: boolean;
   selectedCardId:      CardId | null;
@@ -101,12 +103,80 @@ function InterventionPrompt({
   );
 }
 
+/**
+ * D2: "which bug does the boss unleash this round?" prompt with a countdown.
+ * Shown privately to the boss at the start of each raid round. The server times
+ * the window authoritatively (5s) and picks a random candidate on timeout —
+ * this countdown is display only, so no action is forced from the client.
+ */
+function BossBugChoicePrompt({
+  offer,
+  onAction,
+}: {
+  offer: BossBugChoiceOffer;
+  onAction: (action: Action) => void;
+}) {
+  const [responded, setResponded] = useState(false);
+  const [remainingMs, setRemainingMs] = useState(() => Math.max(0, offer.deadline - Date.now()));
+
+  useEffect(() => {
+    setResponded(false);
+    setRemainingMs(Math.max(0, offer.deadline - Date.now()));
+    const timer = setInterval(() => {
+      setRemainingMs(Math.max(0, offer.deadline - Date.now()));
+    }, 100);
+    return () => clearInterval(timer);
+  }, [offer.deadline]);
+
+  const choose = (bugId: string) => {
+    if (responded) return;
+    setResponded(true);
+    onAction({ type: "choose_raid_bug", bugId });
+  };
+
+  if (responded) {
+    return (
+      <div className={s.container}>
+        <div className={s.hintText}>Bug chosen — starting round...</div>
+      </div>
+    );
+  }
+
+  const seconds = (remainingMs / 1000).toFixed(1);
+  const expired = remainingMs <= 0;
+
+  return (
+    <div className={s.container}>
+      <div className={s.hintText}>
+        ⚔ RAID ROUND {offer.roundIndex + 1} — choose the bug to unleash ({seconds}s)
+      </div>
+      <div className={s.targetBtns}>
+        {offer.candidates.map((bugId) => (
+          <button
+            key={bugId}
+            type="button"
+            className={`${s.targetBtn} ${s.bugChoiceBtn}`}
+            disabled={expired}
+            onClick={() => choose(bugId)}
+          >
+            🐛 {bugId}
+          </button>
+        ))}
+      </div>
+      {expired && (
+        <div className={s.hintText}>Time up — boss picks at random...</div>
+      )}
+    </div>
+  );
+}
+
 export function ActionPanel({
   hand,
   phase,
   isMyTurn,
   resetOrRaidPending,
   interventionOffer,
+  bossBugChoice,
   interventionPending,
   selectedCardId,
   selectedCardIds = [],
@@ -149,6 +219,13 @@ export function ActionPanel({
       setSelectedTarget(isBossTurn ? "" as PlayerId : "boss");
     }
   }, [isBossTurn, phase]);
+
+  // D2: the boss must choose this round's bug before any raid action — this is
+  // addressed privately to the boss (not necessarily the turn player), so it
+  // renders before the isMyTurn guard, ahead of everything else.
+  if (bossBugChoice) {
+    return <BossBugChoicePrompt offer={bossBugChoice} onAction={onAction} />;
+  }
 
   // A1: intervention offer prompt takes priority — the offeree is NOT the turn
   // player, so this must render before the isMyTurn guard.
