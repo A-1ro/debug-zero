@@ -30,6 +30,8 @@ export const ACTION_ALREADY_SUBMITTED         = "ACTION_ALREADY_SUBMITTED";
 // A1: intervention offers (optional activation of on_card_played_by_other strategies)
 export const ACTION_INTERVENTION_PENDING      = "ACTION_INTERVENTION_PENDING";
 export const ACTION_NO_PENDING_INTERVENTION   = "ACTION_NO_PENDING_INTERVENTION";
+// D2: boss chooses the raid-round bug
+export const ACTION_INVALID_BUG_CHOICE        = "ACTION_INVALID_BUG_CHOICE";
 
 // WebSocket errors
 export const WS_DUPLICATE_MESSAGE  = "WS_DUPLICATE_MESSAGE";

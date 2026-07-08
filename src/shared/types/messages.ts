@@ -46,6 +46,7 @@ export type ServerMessageType =
   | "server:game_started"
   | "server:action_result"
   | "server:intervention_offer"
+  | "server:boss_bug_choice"
   | "server:hand_updated"
   | "server:phase_changed"
   | "server:raid_round_started"
@@ -175,6 +176,25 @@ export interface InterventionOfferPayload {
   deadline:    number;
 }
 
+/**
+ * D2: sent privately (visibility="player") to the boss player at the start of
+ * each raid round. The boss must answer with a client:action
+ * { type: "choose_raid_bug", bugId } picking one of `candidates` — no answer
+ * within timeoutMs makes the server pick a random candidate (server-authoritative;
+ * the client countdown is display only). If there are no candidates (every bug is
+ * already active) the round starts without this offer.
+ */
+export interface BossBugChoicePayload {
+  gameId:     GameId;
+  roundIndex: number;
+  /** Not-yet-active bug ids the boss may choose from. */
+  candidates: BugId[];
+  /** Response window in ms (rules timeouts.bossBugChoice; default 5000). */
+  timeoutMs:  number;
+  /** Approximate server deadline (epoch ms) — display only. */
+  deadline:   number;
+}
+
 export interface HandUpdatedPayload {
   hand: CardId[];
 }
@@ -239,6 +259,7 @@ export type ServerPayload =
   | GameStartedPayload
   | ActionResultPayload
   | InterventionOfferPayload
+  | BossBugChoicePayload
   | HandUpdatedPayload
   | PhaseChangedPayload
   | RaidRoundStartedPayload
@@ -266,6 +287,7 @@ export type ServerMessage =
   | (ServerMessageBase & { type: "server:game_started";      payload: GameStartedPayload      })
   | (ServerMessageBase & { type: "server:action_result";     payload: ActionResultPayload     })
   | (ServerMessageBase & { type: "server:intervention_offer"; payload: InterventionOfferPayload })
+  | (ServerMessageBase & { type: "server:boss_bug_choice";   payload: BossBugChoicePayload    })
   | (ServerMessageBase & { type: "server:hand_updated";      payload: HandUpdatedPayload      })
   | (ServerMessageBase & { type: "server:phase_changed";     payload: PhaseChangedPayload     })
   | (ServerMessageBase & { type: "server:raid_round_started"; payload: RaidRoundStartedPayload })

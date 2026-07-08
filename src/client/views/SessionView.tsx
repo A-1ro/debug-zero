@@ -59,6 +59,7 @@ export function SessionView() {
       role={role}
       wsStatus={status}
       interventionOffer={state.interventionOffer}
+      bossBugChoice={state.bossBugChoice}
       onAction={sendAction}
       onResetOrRaid={sendResetOrRaid}
     />

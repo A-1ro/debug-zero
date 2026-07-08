@@ -51,7 +51,7 @@ function actionResult(
 }
 
 function stateWith(game: GameView): GameState {
-  return { room: null, session: null, game, error: null };
+  return { room: null, session: null, game, interventionOffer: null, bossBugChoice: null, error: null };
 }
 
 describe("GameState reducer — action_result turn sync (B1)", () => {
@@ -82,5 +82,122 @@ describe("GameState reducer — action_result turn sync (B1)", () => {
     });
     expect(next.game?.turnOrder).toEqual([p("alice"), p("carol")]);
     expect(next.game?.currentTurnIndex).toBe(1);
+  });
+});
+
+// ------------------------------------------------------------
+// D2: boss raid-bug choice offer (server:boss_bug_choice) flows into
+// bossBugChoice and is cleared once the round actually starts.
+// ------------------------------------------------------------
+
+function bossBugChoiceMsg(
+  candidates: string[],
+  roundIndex = 0,
+  deadline = Date.now() + 5000
+): ServerMessage {
+  return {
+    id: "m-bbc" as MessageId,
+    type: "server:boss_bug_choice",
+    roomId: "room-1" as RoomId,
+    gameId: "game-1" as GameId,
+    visibility: "player",
+    targetPlayerId: p("boss"),
+    payload: { gameId: "game-1" as GameId, roundIndex, candidates, timeoutMs: 5000, deadline },
+  } as ServerMessage;
+}
+
+function raidRoundStartedMsg(
+  overrides: Partial<{
+    roundIndex: number;
+    activeBugId: string;
+    turnOrder: PlayerId[];
+    diceResults: Record<PlayerId, number>;
+  }> = {}
+): ServerMessage {
+  return {
+    id: "m-rrs" as MessageId,
+    type: "server:raid_round_started",
+    roomId: "room-1" as RoomId,
+    gameId: "game-1" as GameId,
+    visibility: "all",
+    payload: {
+      roundIndex:  overrides.roundIndex  ?? 1,
+      activeBugId: overrides.activeBugId ?? "null-pointer",
+      turnOrder:   overrides.turnOrder   ?? [p("bob"), p("alice")],
+      diceResults: overrides.diceResults ?? { [p("alice")]: 3, [p("bob")]: 8 },
+    },
+  } as ServerMessage;
+}
+
+describe("GameState reducer — boss raid-bug choice (D2)", () => {
+  it("server:boss_bug_choice で bossBugChoice に候補が入る", () => {
+    const state = stateWith(gameWith([p("alice"), p("bob")], 0));
+    const next = reducer(state, {
+      type: "message",
+      payload: bossBugChoiceMsg(["null-pointer", "race-condition"], 0),
+    });
+    expect(next.bossBugChoice).not.toBeNull();
+    expect(next.bossBugChoice?.candidates).toEqual(["null-pointer", "race-condition"]);
+    expect(next.bossBugChoice?.roundIndex).toBe(0);
+  });
+
+  it("ラウンド開始（server:raid_round_started）で offer がクリアされる", () => {
+    const withOffer: GameState = {
+      ...stateWith(gameWith([p("alice"), p("bob")], 0)),
+      bossBugChoice: { roundIndex: 0, candidates: ["null-pointer"], timeoutMs: 5000, deadline: Date.now() + 5000 },
+    };
+    const next = reducer(withOffer, { type: "message", payload: raidRoundStartedMsg() });
+    expect(next.bossBugChoice).toBeNull();
+  });
+
+  it("state_sync で offer は復元されずクリアされる", () => {
+    const withOffer: GameState = {
+      ...stateWith(gameWith([p("alice"), p("bob")], 0)),
+      bossBugChoice: { roundIndex: 0, candidates: ["null-pointer"], timeoutMs: 5000, deadline: Date.now() + 5000 },
+    };
+    const syncMsg = {
+      id: "m-sync" as MessageId,
+      type: "server:state_sync",
+      roomId: "room-1" as RoomId,
+      visibility: "player",
+      payload: { room: null, session: null, game: null },
+    } as ServerMessage;
+    const next = reducer(withOffer, { type: "message", payload: syncMsg });
+    expect(next.bossBugChoice).toBeNull();
+  });
+});
+
+describe("GameState reducer — raid round dice/roundIndex refresh (D3)", () => {
+  it("server:raid_round_started が raidState の dice/turnOrder/bug を更新する", () => {
+    const base = gameWith([p("alice"), p("bob")], 0);
+    base.phase = "raid";
+    base.raidState = {
+      bossPlayerId:     p("boss"),
+      bossHP:           50,
+      playerHPs:        { [p("alice")]: 10, [p("bob")]: 10 },
+      activeBugId:      "old-bug",
+      roundIndex:       0,
+      turnOrder:        [p("alice"), p("bob")],
+      currentTurnIndex: 0,
+      bossActionsLeft:  1,
+      diceResults:      { [p("alice")]: 1, [p("bob")]: 2 },
+      awaitingBugChoice: true,
+    };
+    const next = reducer(stateWith(base), {
+      type: "message",
+      payload: raidRoundStartedMsg({
+        roundIndex: 2,
+        activeBugId: "race-condition",
+        turnOrder: [p("bob"), p("alice")],
+        diceResults: { [p("alice")]: 4, [p("bob")]: 9 },
+      }),
+    });
+    expect(next.game?.raidState?.roundIndex).toBe(2);
+    expect(next.game?.raidState?.activeBugId).toBe("race-condition");
+    expect(next.game?.raidState?.turnOrder).toEqual([p("bob"), p("alice")]);
+    expect(next.game?.raidState?.diceResults).toEqual({ [p("alice")]: 4, [p("bob")]: 9 });
+    expect(next.game?.raidState?.awaitingBugChoice).toBe(false);
+    // 既存フィールド（HP等）は保持される
+    expect(next.game?.raidState?.bossHP).toBe(50);
   });
 });

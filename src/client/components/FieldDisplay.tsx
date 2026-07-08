@@ -112,6 +112,20 @@ export function FieldDisplay({ game, room, playerId }: Props) {
           <div className={s.raidBugId}>
             BUG: {game.raidState.activeBugId} · ROUND {game.raidState.roundIndex}
           </div>
+          {game.raidState.diceResults && Object.keys(game.raidState.diceResults).length > 0 && (
+            <div className={s.raidDice}>
+              🎲{" "}
+              {Object.entries(game.raidState.diceResults)
+                .sort(([, a], [, b]) => b - a)
+                .map(([pid, roll]) => {
+                  const name = pid === playerId
+                    ? "YOU"
+                    : room?.players.find((p) => p.id === pid)?.name ?? pid.slice(0, 8);
+                  return `${name} ${roll}`;
+                })
+                .join(" · ")}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -129,6 +129,9 @@ export interface TurnTimeouts {
   raid:     number;
   /** 介入オファーの応答待ち（A1）。省略時 5000ms。無応答はパス扱い。 */
   intervention?: number;
+  /** レイド戦ラウンド開始時のボスのバグ選択待ち（D2）。省略時は intervention、
+   *  それも無ければ 5000ms。無応答はランダム選択で代打。 */
+  bossBugChoice?: number;
 }
 
 export interface RuleSet {

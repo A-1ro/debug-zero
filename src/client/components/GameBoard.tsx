@@ -3,7 +3,7 @@ import type {
   GameView, Session, Room, PlayerId, CardId, Action,
 } from "../../shared/types/domain";
 import type { WsStatus } from "../hooks/useWebSocket";
-import type { InterventionOffer } from "../hooks/useGameState";
+import type { InterventionOffer, BossBugChoiceOffer } from "../hooks/useGameState";
 import { PlayerList }    from "./PlayerList";
 import { FieldDisplay }  from "./FieldDisplay";
 import { HandDisplay }   from "./HandDisplay";
@@ -21,6 +21,8 @@ interface Props {
   wsStatus:      WsStatus;
   /** A1: private intervention offer addressed to this player */
   interventionOffer?: InterventionOffer | null;
+  /** D2: private raid-bug choice offer addressed to the boss */
+  bossBugChoice?: BossBugChoiceOffer | null;
   onAction:      (action: Action) => void;
   onResetOrRaid: (choice: "reset" | "raid") => void;
 }
@@ -33,6 +35,7 @@ export function GameBoard({
   role,
   wsStatus,
   interventionOffer,
+  bossBugChoice,
   onAction,
   onResetOrRaid,
 }: Props) {
@@ -216,6 +219,7 @@ export function GameBoard({
                   isMyTurn={isMyTurn}
                   resetOrRaidPending={resetOrRaidPending}
                   interventionOffer={interventionOffer}
+                  bossBugChoice={bossBugChoice}
                   interventionPending={game.interventionPending}
                   selectedCardId={selectedCardId}
                   selectedCardIds={selectedCardIds}

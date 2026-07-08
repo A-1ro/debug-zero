@@ -99,11 +99,26 @@ export interface RaidState {
   bossPlayerId:     PlayerId;
   bossHP:           number;
   playerHPs:        Record<PlayerId, number>;
+  /** Bug active this round — chosen by the boss (owner ruling D2). */
   activeBugId:      BugId;
   roundIndex:       number;
+  /** Player turn order for this round, decided by 1D10 per player each round,
+   *  sorted descending (owner ruling D3). The boss is NOT included (§3.4). */
   turnOrder:        PlayerId[];
   currentTurnIndex: number;
   bossActionsLeft:  number;
+  /** True while the boss is taking its actions for the round (after every
+   *  player has acted). While true, currentTurnIndex sits past the last player
+   *  slot and the boss is the actor. undefined = a player is on the clock. */
+  bossTurn?:        boolean;
+  /** Final 1D10 roll per player used to build this round's turnOrder (D3).
+   *  Optional so in-progress raids from before this change deserialize cleanly. */
+  diceResults?:     Record<PlayerId, number>;
+  /** True while waiting for the boss to choose this round's bug (D2). No combat
+   *  action is accepted until the boss chooses (or the choice times out). */
+  awaitingBugChoice?: boolean;
+  /** Not-yet-active bug ids the boss may choose from this round (D2). */
+  bugCandidates?:   BugId[];
 }
 
 /**
@@ -212,6 +227,13 @@ export interface InterventionResponseAction {
   activate: boolean;
 }
 
+/** Boss's choice of the bug to spawn for a raid round (owner ruling D2).
+ *  Sent in response to server:boss_bug_choice; bugId must be a candidate. */
+export interface ChooseRaidBugAction {
+  type:  "choose_raid_bug";
+  bugId: BugId;
+}
+
 export type Action =
   | PlayCardAction
   | RemoveBugAction
@@ -219,7 +241,8 @@ export type Action =
   | ResetOrRaidAction
   | ShowdownSubmitAction
   | SelectStrategyAction
-  | InterventionResponseAction;
+  | InterventionResponseAction
+  | ChooseRaidBugAction;
 
 // ============================================================
 // Result types

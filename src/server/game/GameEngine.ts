@@ -8,12 +8,15 @@ import type {
   ResetOrRaidAction,
   ShowdownSubmitAction,
   InterventionResponseAction,
+  ChooseRaidBugAction,
   Operation,
   PlayerId,
   StrategyId,
   CardId,
+  BugId,
   Card,
   FieldCard,
+  RaidState,
   EventLog,
   EventId,
 } from "../../shared/types/domain";
@@ -21,7 +24,7 @@ import type { RuleSet, RemovalCost } from "../../shared/types/rules";
 import type { EffectContext } from "../../shared/types/effects";
 import { validate } from "./ActionValidator";
 import { resolve as arithmeticResolve } from "./ArithmeticJudge";
-import { nextTurnIndex, nextRaidTurnIndex } from "./TurnManager";
+import { nextTurnIndex } from "./TurnManager";
 import {
   checkPhaseTransition,
   resolveZeroCardTransition,
@@ -455,7 +458,7 @@ function applyDrawCard(game: Game, _action: DrawCardAction, ctx: EngineContext):
       hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
       raidState: {
         ...rs,
-        currentTurnIndex: nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder),
+        ...advanceRaidPlayerTurn(rs),
       },
       appendEvents: [{
         id:        newEventId(),
@@ -666,25 +669,23 @@ function applyRemoveBug(game: Game, action: RemoveBugAction, ctx: EngineContext)
   // Raid: bug removal consumes the player's raid turn and clears the active bug
   if (game.phase === "raid" && game.raidState) {
     const rs = patch.raidState && patch.raidState !== null ? patch.raidState : game.raidState;
-    let turnOrder = rs.turnOrder;
-    let currentTurnIndex = nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder);
 
     // An HP removal cost may knock the payer out (e.g. paying HP-3 at exactly
-    // 3 HP) — same elimination path as being hit by the boss (D6)
+    // 3 HP) — same elimination path as being hit by the boss (D6). The remover
+    // is always the current (non-boss) player, so removal always ends their turn.
     const events: EventLog[] = [];
+    let turn: { turnOrder: PlayerId[]; currentTurnIndex: number; bossTurn: boolean };
     if ((rs.playerHPs[actorId] ?? 1) <= 0) {
-      const elim = eliminateRaidPlayer(turnOrder, currentTurnIndex, actorId);
-      if (elim.removed) {
-        turnOrder = elim.turnOrder;
-        currentTurnIndex = elim.currentTurnIndex;
-        events.push({
-          id:        newEventId(),
-          timestamp: Date.now(),
-          type:      "player_eliminated",
-          actorId:   "system",
-          payload:   { playerId: actorId, reason: "raid_hp_zero" },
-        });
-      }
+      turn = removeRaidPlayerFromTurn(rs, actorId);
+      events.push({
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "player_eliminated",
+        actorId:   "system",
+        payload:   { playerId: actorId, reason: "raid_hp_zero" },
+      });
+    } else {
+      turn = advanceRaidPlayerTurn(rs);
     }
 
     patch = {
@@ -692,8 +693,9 @@ function applyRemoveBug(game: Game, action: RemoveBugAction, ctx: EngineContext)
       raidState: {
         ...rs,
         activeBugId: rs.activeBugId === action.bugId ? "" : rs.activeBugId,
-        turnOrder,
-        currentTurnIndex,
+        turnOrder:        turn.turnOrder,
+        currentTurnIndex: turn.currentTurnIndex,
+        bossTurn:         turn.bossTurn,
       },
       appendEvents: [...(patch.appendEvents ?? []), ...events],
     };
@@ -754,11 +756,179 @@ function applyReset(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: () => 
   });
 }
 
-/** Pick a random not-yet-active bug for a new raid round ("" if none left). */
-function pickRaidBug(residualBugs: string[], ruleSet: RuleSet, rng: () => number): string {
-  const candidates = ruleSet.bugs.map(b => b.id).filter(id => !residualBugs.includes(id));
-  if (candidates.length === 0) return "";
-  return candidates[Math.floor(rng() * candidates.length)];
+// ── Raid round machinery (D2 boss bug choice / D3 1D10 turn order) ─────────
+
+/** Not-yet-active bugs the boss may choose from at a round start (D2). */
+function raidBugCandidates(residualBugs: BugId[], ruleSet: RuleSet): BugId[] {
+  return ruleSet.bugs.map(b => b.id).filter(id => !residualBugs.includes(id));
+}
+
+/** One 1D10 roll (1..10). */
+function rollD10(rng: () => number): number {
+  return Math.floor(rng() * 10) + 1;
+}
+
+/**
+ * D3: roll 1D10 per player and order them by roll, descending. Ties are
+ * re-rolled among the tied players only, recursively, until each rank is
+ * unique. `diceResults` records each player's FINAL roll (the one that placed
+ * them). A depth cap guards against a degenerate rng that can never break a tie
+ * (falls back to playerId order for the still-tied group).
+ */
+function rollRaidTurnOrder(
+  players: PlayerId[],
+  rng: () => number,
+): { order: PlayerId[]; diceResults: Record<PlayerId, number> } {
+  const diceResults: Record<PlayerId, number> = {};
+
+  const rank = (group: PlayerId[], depth: number): PlayerId[] => {
+    const rolls: Record<PlayerId, number> = {};
+    for (const p of group) rolls[p] = rollD10(rng);
+
+    const byRoll = new Map<number, PlayerId[]>();
+    for (const p of group) {
+      const bucket = byRoll.get(rolls[p]) ?? [];
+      bucket.push(p);
+      byRoll.set(rolls[p], bucket);
+    }
+
+    const out: PlayerId[] = [];
+    for (const value of [...byRoll.keys()].sort((a, b) => b - a)) {
+      const tied = byRoll.get(value)!;
+      if (tied.length === 1 || depth >= 100) {
+        // resolved (or give up re-rolling: deterministic playerId fallback)
+        const ordered = tied.length === 1 ? tied : [...tied].sort();
+        for (const p of ordered) { diceResults[p] = value; out.push(p); }
+      } else {
+        // re-roll among the tied players only (D3)
+        out.push(...rank(tied, depth + 1));
+      }
+    }
+    return out;
+  };
+
+  return { order: rank(players, 0), diceResults };
+}
+
+/** Advance the raid turn after a player has acted: next player, or the boss. */
+function advanceRaidPlayerTurn(
+  rs: RaidState,
+): { turnOrder: PlayerId[]; currentTurnIndex: number; bossTurn: boolean } {
+  const nextIdx = rs.currentTurnIndex + 1;
+  if (nextIdx >= rs.turnOrder.length) {
+    // every player has acted → the boss's turn(s)
+    return { turnOrder: rs.turnOrder, currentTurnIndex: rs.turnOrder.length, bossTurn: true };
+  }
+  return { turnOrder: rs.turnOrder, currentTurnIndex: nextIdx, bossTurn: false };
+}
+
+/**
+ * Remove the acting player from the raid rotation (their HP hit 0). Since the
+ * remover is the current player, the following player shifts into the same
+ * slot; if they were the last player, the boss takes over.
+ */
+function removeRaidPlayerFromTurn(
+  rs: RaidState,
+  actorId: PlayerId,
+): { turnOrder: PlayerId[]; currentTurnIndex: number; bossTurn: boolean } {
+  const turnOrder = rs.turnOrder.filter(pid => pid !== actorId);
+  if (rs.currentTurnIndex >= turnOrder.length) {
+    return { turnOrder, currentTurnIndex: turnOrder.length, bossTurn: true };
+  }
+  return { turnOrder, currentTurnIndex: rs.currentTurnIndex, bossTurn: false };
+}
+
+/** Alive (HP > 0) non-boss players — the ones who roll for turn order. */
+function aliveRaidPlayers(playerHPs: Record<PlayerId, number>): PlayerId[] {
+  return Object.keys(playerHPs).filter(pid => (playerHPs[pid] ?? 0) > 0) as PlayerId[];
+}
+
+/**
+ * Begin a raid round once the bug is decided (D3): roll the 1D10 turn order,
+ * activate the chosen bug, reset the boss action budget. Returns the fresh
+ * RaidState plus residualBugs and the round-start events.
+ */
+function beginRaidRound(
+  base: RaidState,
+  chosenBug: BugId,
+  residualBugs: BugId[],
+  roundIndex: number,
+  rng: () => number,
+): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  const alive = aliveRaidPlayers(base.playerHPs);
+  const { order, diceResults } = rollRaidTurnOrder(alive, rng);
+
+  const newResidual = chosenBug && !residualBugs.includes(chosenBug)
+    ? [...residualBugs, chosenBug]
+    : residualBugs;
+
+  const events: EventLog[] = [];
+  if (chosenBug) {
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "bug_activated",
+      actorId:   "system",
+      payload:   { bugId: chosenBug, roundIndex },
+    });
+  }
+  events.push({
+    id:        newEventId(),
+    timestamp: Date.now(),
+    type:      "raid_round_started",
+    actorId:   "system",
+    payload:   { roundIndex, activeBugId: chosenBug, turnOrder: order, diceResults },
+  });
+
+  const raidState: RaidState = {
+    ...base,
+    activeBugId:      chosenBug,
+    roundIndex,
+    turnOrder:        order,
+    diceResults,
+    currentTurnIndex: 0,
+    bossTurn:         false,
+    bossActionsLeft:  Math.ceil(alive.length / 2),
+    awaitingBugChoice: false,
+    bugCandidates:    undefined,
+  };
+
+  return { raidState, residualBugs: newResidual, events };
+}
+
+/**
+ * Start the next raid round. If any bug is still available the boss must first
+ * choose one (D2) — enter the awaiting-choice state and wait. Otherwise (every
+ * bug already active) roll the turn order and begin immediately.
+ */
+function enterNextRaidRound(
+  combat: { bossPlayerId: PlayerId; bossHP: number; playerHPs: Record<PlayerId, number> },
+  residualBugs: BugId[],
+  ruleSet: RuleSet,
+  roundIndex: number,
+  rng: () => number,
+): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  const base: RaidState = {
+    bossPlayerId:     combat.bossPlayerId,
+    bossHP:           combat.bossHP,
+    playerHPs:        combat.playerHPs,
+    activeBugId:      "",
+    roundIndex,
+    turnOrder:        [],
+    currentTurnIndex: 0,
+    bossActionsLeft:  0,
+    bossTurn:         false,
+  };
+
+  const candidates = raidBugCandidates(residualBugs, ruleSet);
+  if (candidates.length === 0) {
+    return beginRaidRound(base, "", residualBugs, roundIndex, rng);
+  }
+  return {
+    raidState: { ...base, awaitingBugChoice: true, bugCandidates: candidates },
+    residualBugs,
+    events: [],
+  };
 }
 
 function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: () => number): Game {
@@ -768,29 +938,14 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
   const { initialHP } = ruleSet.initialConfig;
   const playerHPs: Record<PlayerId, number> = {};
   for (const pid of game.turnOrder) {
-    if (pid !== actorId) playerHPs[pid] = initialHP;
+    if (pid !== actorId) playerHPs[pid] = initialHP; // the 0-card player is the boss
   }
 
-  // The player who played the 0 card becomes the boss
-  const bossPlayerId = actorId;
-  const playerCount = game.turnOrder.length - 1;
-  // Boss takes the last slot of each round (players act first, then the boss
-  // acts ceil(playerCount / 2) times)
-  const raidTurnOrder = [...game.turnOrder.filter(pid => pid !== bossPlayerId), bossPlayerId];
-
-  // Round start: a bug spawns (removable during the raid via remove_bug)
-  const spawnedBug = pickRaidBug(game.residualBugs, ruleSet, rng);
-
-  const raidState = {
-    bossPlayerId,
-    bossHP,
-    playerHPs,
-    activeBugId:      spawnedBug,
-    roundIndex:       1, // 1-based (detail-design.md §3 RaidState: 1始まり)
-    turnOrder:        raidTurnOrder,
-    currentTurnIndex: 0,
-    bossActionsLeft:  Math.ceil(playerCount / 2),
-  };
+  // Round 1: the boss chooses the bug (D2), then 1D10 decides the order (D3).
+  const next = enterNextRaidRound(
+    { bossPlayerId: actorId, bossHP, playerHPs },
+    game.residualBugs, ruleSet, 1, rng,
+  );
 
   // Clear the field — move all field card IDs to excludedCards
   const allFieldCardIds = game.field.map(fc => fc.cardId);
@@ -801,7 +956,7 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
       timestamp: Date.now(),
       type:      "raid_started",
       actorId,
-      payload:   { bossHP, bossPlayerId },
+      payload:   { bossHP, bossPlayerId: actorId },
     },
     {
       id:        newEventId(),
@@ -810,24 +965,28 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
       actorId:   "system",
       payload:   { from: "normal", to: "raid", reason: "card_zero_played_raid" },
     },
+    ...next.events,
   ];
-  if (spawnedBug) {
-    events.push({
-      id:        newEventId(),
-      timestamp: Date.now(),
-      type:      "bug_activated",
-      actorId:   "system",
-      payload:   { bugId: spawnedBug, roundIndex: raidState.roundIndex },
-    });
-  }
 
   return applyPatch(game, {
-    phase:        "raid",
-    field:        [],
+    phase:         "raid",
+    field:         [],
     excludedCards: [...game.excludedCards, ...allFieldCardIds],
-    residualBugs:  spawnedBug ? [...game.residualBugs, spawnedBug] : game.residualBugs,
-    raidState,
+    residualBugs:  next.residualBugs,
+    raidState:     next.raidState,
     appendEvents:  events,
+  });
+}
+
+/** D2: the boss's chosen bug resolves the awaiting state and begins the round. */
+function applyChooseRaidBug(game: Game, action: ChooseRaidBugAction, ctx: EngineContext): Game {
+  const rs = game.raidState!; // validated upstream (awaitingBugChoice, boss, candidate)
+  const { rng = Math.random } = ctx;
+  const begun = beginRaidRound(rs, action.bugId, game.residualBugs, rs.roundIndex, rng);
+  return applyPatch(game, {
+    residualBugs: begun.residualBugs,
+    raidState:    begun.raidState,
+    appendEvents: begun.events,
   });
 }
 
@@ -845,26 +1004,6 @@ function applyResetOrRaid(game: Game, action: ResetOrRaidAction, ctx: EngineCont
 // ============================================================
 // raid combat
 // ============================================================
-
-/**
- * Remove a raid player whose HP reached 0 from the raid rotation, keeping
- * currentTurnIndex pointing at the same next actor (with wraparound).
- * Shared by boss attacks and HP removal costs (D6).
- */
-function eliminateRaidPlayer(
-  turnOrder: PlayerId[],
-  currentTurnIndex: number,
-  target: PlayerId,
-): { turnOrder: PlayerId[]; currentTurnIndex: number; removed: boolean } {
-  const removedIdx = turnOrder.indexOf(target);
-  if (removedIdx === -1) return { turnOrder, currentTurnIndex, removed: false };
-
-  const newOrder = turnOrder.filter(pid => pid !== target);
-  let idx = currentTurnIndex;
-  if (removedIdx < idx) idx--;
-  idx = newOrder.length > 0 ? idx % newOrder.length : 0;
-  return { turnOrder: newOrder, currentTurnIndex: idx, removed: true };
-}
 
 /**
  * Raid-phase play_card (§5.3 レイド戦ラウンド):
@@ -900,9 +1039,13 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
   const playerHPs = { ...rs.playerHPs };
   let turnOrder = [...rs.turnOrder];
   let currentTurnIndex = rs.currentTurnIndex;
+  let bossTurn = rs.bossTurn ?? false;
   let bossActionsLeft = rs.bossActionsLeft;
   let roundIndex = rs.roundIndex;
   let activeBugId = rs.activeBugId;
+  let diceResults = rs.diceResults;
+  let awaitingBugChoice = false;
+  let bugCandidates: BugId[] | undefined = undefined;
 
   events.push({
     id:        newEventId(),
@@ -922,13 +1065,11 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       actorId,
       payload:   { target, delta: -value, hp: playerHPs[target] },
     });
-    // A player at 0 HP drops out of the raid rotation
-    const elim = playerHPs[target] <= 0
-      ? eliminateRaidPlayer(turnOrder, currentTurnIndex, target)
-      : null;
-    if (elim?.removed) {
-      turnOrder = elim.turnOrder;
-      currentTurnIndex = elim.currentTurnIndex;
+    // A player at 0 HP drops out of the raid rotation. The boss holds the turn
+    // (bossTurn), so the boss slot stays at the end of the shrunken order.
+    if (playerHPs[target] <= 0 && turnOrder.includes(target)) {
+      turnOrder = turnOrder.filter(pid => pid !== target);
+      currentTurnIndex = turnOrder.length;
       events.push({
         id:        newEventId(),
         timestamp: Date.now(),
@@ -939,38 +1080,32 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
     }
 
     bossActionsLeft--;
-    if (bossActionsLeft <= 0) {
-      // Round complete → next round: players act again, a new bug spawns,
-      // and an empty deck is rebuilt by shuffling the field back in (§5.3-5)
-      roundIndex++;
-      const alivePlayers = turnOrder.filter(pid => pid !== rs.bossPlayerId);
-      bossActionsLeft = Math.ceil(alivePlayers.length / 2);
-      currentTurnIndex = 0;
+    if (bossActionsLeft <= 0 && aliveRaidPlayers(playerHPs).length > 0) {
+      // Round complete → next round. An empty deck is rebuilt by shuffling the
+      // field back in (§5.3-5), then the boss chooses the next bug (D2) and
+      // 1D10 re-decides the order (D3).
       if (deck.length === 0 && field.length > 0) {
         deck = shuffleArray(field.map(fc => fc.cardId), rng);
         field = [];
       }
-      const spawned = pickRaidBug(residualBugs, ruleSet, rng);
-      if (spawned) {
-        residualBugs = [...residualBugs, spawned];
-        activeBugId = spawned;
-        events.push({
-          id:        newEventId(),
-          timestamp: Date.now(),
-          type:      "bug_activated",
-          actorId:   "system",
-          payload:   { bugId: spawned, roundIndex },
-        });
-      }
-      events.push({
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "raid_round_started",
-        actorId:   "system",
-        payload:   { roundIndex, bossActionsLeft },
-      });
+      const next = enterNextRaidRound(
+        { bossPlayerId: rs.bossPlayerId, bossHP, playerHPs },
+        residualBugs, ruleSet, roundIndex + 1, rng,
+      );
+      residualBugs = next.residualBugs;
+      events.push(...next.events);
+      const ns = next.raidState;
+      turnOrder = ns.turnOrder;
+      currentTurnIndex = ns.currentTurnIndex;
+      bossTurn = ns.bossTurn ?? false;
+      bossActionsLeft = ns.bossActionsLeft;
+      roundIndex = ns.roundIndex;
+      activeBugId = ns.activeBugId;
+      diceResults = ns.diceResults;
+      awaitingBugChoice = ns.awaitingBugChoice ?? false;
+      bugCandidates = ns.bugCandidates;
     }
-    // Boss keeps the turn until its actions for the round run out
+    // else: boss keeps the turn (bossTurn stays true) until its actions run out
   } else {
     bossHP -= value;
     events.push({
@@ -980,7 +1115,9 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       actorId,
       payload:   { target: "boss", delta: -value, hp: bossHP },
     });
-    currentTurnIndex = nextRaidTurnIndex(currentTurnIndex, turnOrder);
+    const adv = advanceRaidPlayerTurn({ ...rs, turnOrder, currentTurnIndex });
+    currentTurnIndex = adv.currentTurnIndex;
+    bossTurn = adv.bossTurn;
   }
 
   const updated = applyPatch(game, {
@@ -994,9 +1131,13 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       playerHPs,
       turnOrder,
       currentTurnIndex,
+      bossTurn,
       bossActionsLeft,
       roundIndex,
       activeBugId,
+      diceResults,
+      awaitingBugChoice,
+      bugCandidates,
     },
     appendEvents: events,
   });
@@ -1090,6 +1231,8 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
       return applyShowdownSubmit(game, action, ctx);
     case "intervention_response":
       return applyInterventionResponse(game, action, ctx);
+    case "choose_raid_bug":
+      return applyChooseRaidBug(game, action, ctx);
     case "select_strategy":
       // select_strategy is a session-level action; GameEngine returns game unchanged
       return game;

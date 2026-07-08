@@ -309,8 +309,10 @@ initialConfig:
 
 # 手番タイムアウト（ミリ秒）。超過するとサーバが代打で手を進める
 # intervention: 介入オファー（Control系/Hack/TrickStar）の応答待ち。無応答=パス扱い
+# bossBugChoice: レイド戦ラウンド開始時のボスのバグ選択待ち。無応答=ランダム選択で代打
 timeouts:
   normal: 45000
   showdown: 30000
   raid: 30000
   intervention: 5000
+  bossBugChoice: 5000

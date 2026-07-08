@@ -146,6 +146,23 @@
   background: rgba(139,92,246,0.06);
 }
 
+/* D2: raid-bug choice buttons (boss) — red/danger accent */
+.bugChoiceBtn {
+  color: var(--red);
+  border-color: rgba(255,26,75,0.5);
+}
+
+.bugChoiceBtn:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(255,26,75,0.08);
+}
+
+.bugChoiceBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .hintText {
   font-size: 10px;
   color: var(--text-muted);

@@ -1,5 +1,6 @@
 import type { Game, Action, PlayerId, CardId } from "../../shared/types/domain";
 import type { RuleSet } from "../../shared/types/rules";
+import { raidActor } from "./TurnManager";
 
 // ============================================================
 // AutoAction — 手番タイムアウト時にサーバが代打で選ぶ「安全な一手」
@@ -59,8 +60,16 @@ export function autoActionFor(
 
   if (game.phase === "raid" && game.raidState) {
     const rs = game.raidState;
+    // D2: ボスのバグ選択待ち。無応答はランダム選択で代打（従来の rng 選択と同挙動）。
+    if (rs.awaitingBugChoice) {
+      if (playerId !== rs.bossPlayerId) return null;
+      const candidates = rs.bugCandidates ?? [];
+      if (candidates.length === 0) return null;
+      const bugId = candidates[Math.floor(Math.random() * candidates.length)];
+      return { type: "choose_raid_bug", bugId };
+    }
     // 手番が本当にこのプレイヤーか（防御的チェック）
-    if (rs.turnOrder[rs.currentTurnIndex] !== playerId) return null;
+    if (raidActor(rs) !== playerId) return null;
     const c = lowestCard(hand);
     if (!c) {
       // ボスは補充できない。プレイヤーは手札が無ければドロー（補充）で手番を渡す
