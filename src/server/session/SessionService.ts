@@ -102,12 +102,19 @@ function cardValueFromId(cardId: CardId): number {
 // ============================================================
 
 /**
- * Determines initial turn order.
- * Each player "draws" the top card; the player with the highest value goes first.
- * Ties are broken by player order in the input array (earlier index = higher priority).
+ * Determines initial turn order (detail-design.md §5.2-1: 各プレイヤーが1枚引いて
+ * 最大値のプレイヤーが先攻、時計回り).
+ * Each player "draws" the top card; the player with the highest value goes
+ * first, and the rest follow CLOCKWISE in seating order (= the order of the
+ * input playerIds array, i.e. room join order) — NOT sorted by drawn value.
+ * Tie for the highest value: the tied player earliest in seating order goes
+ * first (the rule documents specify no tie-break; seating order is used as
+ * the authoritative interpretation, recorded here).
  * Returns [turnOrder, updatedDeck] — the drawn cards are returned to the deck.
+ *
+ * Exported for unit testing (pure function).
  */
-function determineTurnOrder(
+export function determineTurnOrder(
   playerIds: PlayerId[],
   deck: CardId[],
   rng: () => number
@@ -127,9 +134,17 @@ function determineTurnOrder(
     drawn.push({ playerId, cardId, value: cardValueFromId(cardId) });
   }
 
-  // Sort by value descending; ties keep original order (stable)
-  const sorted = [...drawn].sort((a, b) => b.value - a.value);
-  const turnOrder = sorted.map((d) => d.playerId);
+  // Highest drawn value leads (ties: the first max encountered wins = earliest seating order)
+  const firstIdx = drawn.reduce(
+    (best, d, idx) => (d.value > drawn[best].value ? idx : best),
+    0
+  );
+
+  // Rotate the seating order so the winner leads; the rest follow clockwise
+  const turnOrder = [
+    ...playerIds.slice(firstIdx),
+    ...playerIds.slice(0, firstIdx),
+  ];
 
   // Return drawn cards to the bottom of the deck (they are effectively "used" for ordering only)
   // Per spec: drawn cards are put back and deck is reshuffled before dealing hands
