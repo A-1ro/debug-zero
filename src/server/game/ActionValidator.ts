@@ -8,12 +8,14 @@ import type {
   ShowdownSubmitAction,
   SelectStrategyAction,
   InterventionResponseAction,
+  ChooseRaidBugAction,
   ValidationResult,
   PlayerId,
   CardId,
 } from "../../shared/types/domain";
 import type { RuleSet, RemovalCost } from "../../shared/types/rules";
 import { canApplyOperation } from "./ArithmeticJudge";
+import { raidActor } from "./TurnManager";
 import {
   ACTION_NOT_YOUR_TURN,
   ACTION_INVALID_CARD,
@@ -27,6 +29,7 @@ import {
   ACTION_ALREADY_SUBMITTED,
   ACTION_INTERVENTION_PENDING,
   ACTION_NO_PENDING_INTERVENTION,
+  ACTION_INVALID_BUG_CHOICE,
   SESSION_INVALID_STRATEGY,
 } from "../../shared/constants";
 
@@ -99,7 +102,10 @@ function validatePlayCard(
   if (game.phase === "raid") {
     const rs = game.raidState;
     if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
-    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+    if (rs.awaitingBugChoice) {
+      return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+    }
+    if (raidActor(rs) !== actorId) {
       return fail(ACTION_NOT_YOUR_TURN);
     }
     const hand = game.hands[actorId] ?? [];
@@ -165,10 +171,13 @@ function validateDrawCard(game: Game, ctx: ValidateContext): ValidationResult {
   if (game.phase === "raid") {
     const rs = game.raidState;
     if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
+    if (rs.awaitingBugChoice) {
+      return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+    }
     if (actorId === rs.bossPlayerId) {
       return fail(ACTION_INVALID_PHASE, "The boss cannot refill");
     }
-    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+    if (raidActor(rs) !== actorId) {
       return fail(ACTION_NOT_YOUR_TURN);
     }
     if (game.deck.length === 0) {
@@ -215,10 +224,13 @@ function validateRemoveBug(
   if (game.phase === "raid") {
     const rs = game.raidState;
     if (!rs) return fail(ACTION_INVALID_PHASE, "Raid state missing");
+    if (rs.awaitingBugChoice) {
+      return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+    }
     if (actorId === rs.bossPlayerId) {
       return fail(ACTION_INVALID_PHASE, "The boss cannot remove bugs");
     }
-    if (rs.turnOrder[rs.currentTurnIndex] !== actorId) {
+    if (raidActor(rs) !== actorId) {
       return fail(ACTION_NOT_YOUR_TURN);
     }
   }
@@ -380,6 +392,31 @@ function validateInterventionResponse(
 }
 
 // ============================================================
+// choose_raid_bug (D2)
+// ============================================================
+
+function validateChooseRaidBug(
+  game: Game,
+  action: ChooseRaidBugAction,
+  ctx: ValidateContext,
+): ValidationResult {
+  if (game.phase !== "raid" || !game.raidState) {
+    return fail(ACTION_INVALID_PHASE, "choose_raid_bug is only available during a raid");
+  }
+  const rs = game.raidState;
+  if (!rs.awaitingBugChoice) {
+    return fail(ACTION_INVALID_PHASE, "No bug choice is pending");
+  }
+  if (ctx.actorId !== rs.bossPlayerId) {
+    return fail(ACTION_NOT_YOUR_TURN, "Only the boss chooses the raid bug");
+  }
+  if (!(rs.bugCandidates ?? []).includes(action.bugId)) {
+    return fail(ACTION_INVALID_BUG_CHOICE, `Bug ${action.bugId} is not a candidate`);
+  }
+  return ok();
+}
+
+// ============================================================
 // Main entry point
 // ============================================================
 
@@ -411,6 +448,8 @@ export function validate(
       return validateShowdownSubmit(game, action, ctx);
     case "intervention_response":
       return validateInterventionResponse(game, action, ctx);
+    case "choose_raid_bug":
+      return validateChooseRaidBug(game, action, ctx);
     case "select_strategy":
       return validateSelectStrategy(action, ctx);
   }

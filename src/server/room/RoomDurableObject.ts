@@ -13,6 +13,7 @@ import { EffectResolver } from "../effects/EffectResolver";
 import { registerAllHandlers } from "../effects/registerHandlers";
 import { applyAction, applyPatch } from "../game/GameEngine";
 import { autoActionFor } from "../game/AutoAction";
+import { raidActor, raidTurnView } from "../game/TurnManager";
 import type { RuleSet } from "../../shared/types/rules";
 import type { EngineContext } from "../game/GameEngine";
 import type {
@@ -680,6 +681,14 @@ export class RoomDurableObject implements DurableObject {
       handCounts[pid as PlayerId] = hand.length;
     }
 
+    // Server-side turn fix: during the raid phase the top-level turnOrder /
+    // currentTurnIndex are the frozen normal-phase values and must not be sent.
+    // Project the raid rotation (boss appended after the diced players) so that
+    // clients/bots can read turnOrder[currentTurnIndex] as the current actor.
+    const turnInfo = updatedGame.phase === "raid" && updatedGame.raidState
+      ? raidTurnView(updatedGame.raidState)
+      : { turnOrder: updatedGame.turnOrder, currentTurnIndex: updatedGame.currentTurnIndex };
+
     await this.broadcast({
       id: crypto.randomUUID() as MessageId,
       type: "server:action_result",
@@ -694,8 +703,8 @@ export class RoomDurableObject implements DurableObject {
         fieldCard: action.type === "play_card" ? updatedGame.field.at(-1) : undefined,
         fieldOverride: action.type === "reset_or_raid" ? updatedGame.field : undefined,
         handCounts,
-        turnOrder: updatedGame.turnOrder,
-        currentTurnIndex: updatedGame.currentTurnIndex,
+        turnOrder: turnInfo.turnOrder,
+        currentTurnIndex: turnInfo.currentTurnIndex,
         events: newEvents,
         // A1: bare boolean only — candidate identities/strategies stay hidden
         ...(updatedGame.pendingIntervention ? { interventionPending: true } : {}),
@@ -730,6 +739,53 @@ export class RoomDurableObject implements DurableObject {
           targetPlayerId: candidate.playerId,
         }, room);
       }
+    }
+
+    // D2: a raid round is now waiting for the boss to choose its bug — offer the
+    // choice privately to the boss (visibility="player"). Fires whenever the
+    // awaiting-choice state was just entered (raid start or a round rollover).
+    if (
+      updatedGame.status === "in-progress" &&
+      updatedGame.raidState?.awaitingBugChoice &&
+      !game.raidState?.awaitingBugChoice
+    ) {
+      const rs = updatedGame.raidState;
+      const timeoutMs = ruleSet.timeouts?.bossBugChoice
+        ?? ruleSet.timeouts?.intervention ?? 5000;
+      await this.broadcast({
+        id: crypto.randomUUID() as MessageId,
+        type: "server:boss_bug_choice",
+        roomId: room.id,
+        gameId: updatedGame.id,
+        payload: {
+          gameId: updatedGame.id,
+          roundIndex: rs.roundIndex,
+          candidates: rs.bugCandidates ?? [],
+          timeoutMs,
+          deadline: Date.now() + timeoutMs,
+        },
+        visibility: "player",
+        targetPlayerId: rs.bossPlayerId,
+      }, room);
+    }
+
+    // D3: a raid round just began — broadcast the diced turn order so every
+    // client/spectator can render it (payload built by the engine's event).
+    for (const ev of newEvents) {
+      if (ev.type !== "raid_round_started") continue;
+      await this.broadcast({
+        id: crypto.randomUUID() as MessageId,
+        type: "server:raid_round_started",
+        roomId: room.id,
+        gameId: updatedGame.id,
+        payload: {
+          roundIndex:  ev.payload.roundIndex as number,
+          activeBugId: ev.payload.activeBugId as string,
+          turnOrder:   ev.payload.turnOrder as PlayerId[],
+          diceResults: ev.payload.diceResults as Record<PlayerId, number>,
+        },
+        visibility: "all",
+      }, room);
     }
 
     // Send updated hands to every player whose hand changed (reset redeals all,
@@ -787,6 +843,8 @@ export class RoomDurableObject implements DurableObject {
     const t = ruleSet.timeouts ?? { normal: 45000, showdown: 30000, raid: 30000 };
     // A1: intervention responses have their own (short) window — 5s ruling
     if (game.pendingIntervention) return t.intervention ?? 5000;
+    // D2: the boss's bug choice has its own (short) window — random pick on timeout
+    if (game.raidState?.awaitingBugChoice) return t.bossBugChoice ?? t.intervention ?? 5000;
     return game.phase === "showdown" ? t.showdown : game.phase === "raid" ? t.raid : t.normal;
   }
 
@@ -799,7 +857,8 @@ export class RoomDurableObject implements DurableObject {
       return pi.candidates.find((c) => !(c.playerId in pi.responses))?.playerId;
     }
     if (game.phase === "raid" && game.raidState) {
-      return game.raidState.turnOrder[game.raidState.currentTurnIndex];
+      // Boss during awaitingBugChoice / bossTurn, else the diced player.
+      return raidActor(game.raidState);
     }
     if (game.phase === "showdown") {
       // showdown has no single turn — the first player who hasn't submitted
@@ -842,7 +901,15 @@ export class RoomDurableObject implements DurableObject {
       return `intervention:${pi.triggerCard.cardId}:${Object.keys(pi.responses).length}`;
     }
     if (game.phase === "raid" && game.raidState) {
-      return `raid:${game.raidState.roundIndex}:${game.raidState.currentTurnIndex}`;
+      const rs = game.raidState;
+      // Distinguish the boss's bug-choice wait, each boss action, and each
+      // player turn so a fresh alarm is armed after every raid step.
+      const slot = rs.awaitingBugChoice
+        ? "bug"
+        : rs.bossTurn
+          ? `boss:${rs.bossActionsLeft}`
+          : `p:${rs.currentTurnIndex}`;
+      return `raid:${rs.roundIndex}:${slot}`;
     }
     if (game.phase === "showdown") {
       const submitted = game.events.filter((e) => e.type === "showdown_submitted").length;
