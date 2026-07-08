@@ -1,6 +1,12 @@
 import type { Game, Action, PlayerId, CardId } from "../../shared/types/domain";
 import type { RuleSet } from "../../shared/types/rules";
 import { raidActor } from "./TurnManager";
+import {
+  isRaidCardPlayable,
+  affordableRaidRemoval,
+  isNormalCardPlayable,
+  normalZeroChoicePending,
+} from "./ActionValidator";
 
 // ============================================================
 // AutoAction — 手番タイムアウト時にサーバが代打で選ぶ「安全な一手」
@@ -8,8 +14,8 @@ import { raidActor } from "./TurnManager";
 //
 // 純粋関数。タイムアウトしたプレイヤーが打つべき無難なアクションを返す。
 // 方針: ゲームを進めることを最優先し、勝敗を賭けにいかない安全側の手を選ぶ。
-//  - normal   : 引ける限りドロー（手番だけ進み、勝敗にも0カード選択にも分岐しない）。
-//               引けないときのみ手札最小カードを sub で出す。
+//  - normal   : ランダムな合法カードを1枚 sub で出す（自発ドローはレイド専用＝D10）。
+//               0カードは reset/raid 選択を生むので非0を優先。合法札ゼロなら skip_turn。
 //  - showdown : 手札の最小カード1枚を提出（弱い手＝負けやすいが、止めない）。
 //  - raid     : プレイヤーはボスへ最小カード攻撃／ボスは生存者へ最小カード攻撃。
 //
@@ -25,12 +31,6 @@ function cardValue(id: CardId): number {
 function lowestCard(hand: CardId[]): CardId | undefined {
   if (hand.length === 0) return undefined;
   return [...hand].sort((a, b) => cardValue(a) - cardValue(b))[0];
-}
-
-/** 0以外の最小カード。無ければ（全部0なら）最小カードにフォールバック。 */
-function lowestNonZeroCard(hand: CardId[]): CardId | undefined {
-  const nonZero = hand.filter((c) => cardValue(c) !== 0);
-  return lowestCard(nonZero.length ? nonZero : hand);
 }
 
 export function autoActionFor(
@@ -70,31 +70,58 @@ export function autoActionFor(
     }
     // 手番が本当にこのプレイヤーか（防御的チェック）
     if (raidActor(rs) !== playerId) return null;
-    const c = lowestCard(hand);
-    if (!c) {
-      // ボスは補充できない。プレイヤーは手札が無ければドロー（補充）で手番を渡す
-      if (playerId !== rs.bossPlayerId && game.deck.length > 0) {
-        return { type: "draw_card" };
-      }
-      return null;
-    }
+
+    // ボス: バグの制約を受けない（オーナー裁定1）。最小カードで生存者を攻撃。
     if (playerId === rs.bossPlayerId) {
+      const c = lowestCard(hand);
+      // C裁定: ボスはラウンド開始時に手札を補充されるので、手番時に手札切れは
+      // 事実上起きない。万一（デッキも空など）空なら手を出せない＝null を返すが、
+      // 呼び出し側の alarm はこの null でも固まらず再アームする（belt-and-suspenders）。
+      if (!c) return null;
       const target = Object.entries(rs.playerHPs)
         .filter(([, hp]) => hp > 0)
         .map(([id]) => id as PlayerId)[0];
       if (!target) return null;
       return { type: "play_card", cardId: c, operation: "add", targetId: target };
     }
-    return { type: "play_card", cardId: c, operation: "add", targetId: "boss" };
+
+    // 非ボス: 禁止バグに触れない合法カードを最小から選ぶ。
+    const playable = hand
+      .filter((c) => isRaidCardPlayable(game, c, false))
+      .sort((a, b) => cardValue(a) - cardValue(b));
+    if (playable.length > 0) {
+      return { type: "play_card", cardId: playable[0], operation: "add", targetId: "boss" };
+    }
+    // 出せる札がない → 補充（ドロー）で手番を渡す
+    if (game.deck.length > 0 && hand.length < ruleSet.initialConfig.initialHandSize) {
+      return { type: "draw_card" };
+    }
+    // 補充も不可 → 支払える残バグがあれば除去
+    const removal = affordableRaidRemoval(game, playerId, ruleSet);
+    if (removal) {
+      return { type: "remove_bug", bugId: removal.bugId, costCardIds: removal.costCardIds };
+    }
+    // 合法手が一切ない（全札禁止・補充不可・除去不可）→ スキップ（裁定2・3）
+    return { type: "skip_turn" };
   }
 
   // normal phase
-  const maxHand = ruleSet.initialConfig.initialHandSize;
-  if (hand.length < maxHand && game.deck.length > 0) {
-    return { type: "draw_card" };
+  // D10 (owner ruling): self-draw is illegal in the normal phase — refill is
+  // raid-only. The timeout auto-action instead plays a RANDOM legal card
+  // ("ランダムにカードを1枚出す"). If a 0-card was just played, the player owes a
+  // reset_or_raid choice, not a play — leave that to the reset/raid timeout path.
+  if (normalZeroChoicePending(game, playerId)) return null;
+
+  const legal = hand.filter((c) => isNormalCardPlayable(game, c));
+  // Prefer non-zero cards so we don't stall into a reset/raid choice; only fall
+  // back to a 0-card when every legal card is a 0.
+  const legalNonZero = legal.filter((c) => cardValue(c) !== 0);
+  const pool = legalNonZero.length ? legalNonZero : legal;
+  if (pool.length > 0) {
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    // sub is always arithmetically legal (add/sub have no last-value constraint).
+    return { type: "play_card", cardId: pick, operation: "sub" };
   }
-  // ドローできない（手札満杯 or 山札切れ）→ 最小カードを sub で出す（常に合法）。
-  // 0カードは reset/raid 選択待ちを生むので、0以外を優先して避ける。
-  const c = lowestNonZeroCard(hand);
-  return c ? { type: "play_card", cardId: c, operation: "sub" } : null;
+  // No legal card (every card bug-forbidden) → skip the turn (turn_skipped).
+  return { type: "skip_turn" };
 }

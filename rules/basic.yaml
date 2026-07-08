@@ -222,9 +222,17 @@ bugs:
         type: all_players
       action:
         type: invalidate_strategy
+      # Control-Forbidden は Control 系4戦略すべてを無効化する（実装が意図・D8）。
+      # strategy_match を4つ列挙して data-driven に宣言する（EffectResolver が参照）。
       constraints:
         - type: strategy_match
           strategyId: Control-Add
+        - type: strategy_match
+          strategyId: Control-Sub
+        - type: strategy_match
+          strategyId: Control-Mul
+        - type: strategy_match
+          strategyId: Control-Div
     removalCost:
       type: hp
       amount: 3
@@ -306,6 +314,13 @@ initialConfig:
   initialHandSize: 5
   initialHP: 10
   setNumberFormula: "gameIndex * 10"
+  # レイド戦のボス手札補充（C裁定）。各ラウンド開始時にボスの手札を
+  # max(raidBossHandSize, そのラウンドのボス行動回数=ceil(生存者/2)) 枚まで
+  # デッキから補充し、ボスが手札切れで固まらないことを保証する。デッキは
+  # ラウンド終了時に場から再構築されるので原則枯渇しない。
+  # 未指定（0扱い）だと「行動回数ちょうど」を補充する＝プレイヤーの引き分を
+  # 奪わない最小補充。ボスに予備を持たせたい場合のみ正の値を設定する。
+  # raidBossHandSize: 2
 
 # 手番タイムアウト（ミリ秒）。超過するとサーバが代打で手を進める
 # intervention: 介入オファー（Control系/Hack/TrickStar）の応答待ち。無応答=パス扱い

@@ -116,6 +116,10 @@ export interface InitialConfig {
   initialHandSize:    number;
   initialHP:          number;
   setNumberFormula:   string;
+  /** レイド戦で各ラウンド開始時にボスの手札を補充する枚数の floor（C裁定）。
+   *  実際の補充目標は max(この値, そのラウンドのボス行動回数=ceil(生存者/2))。
+   *  未指定（0扱い）だと行動回数ちょうどを補充する最小補充。正の値でボスに予備を持たせる。 */
+  raidBossHandSize?:  number;
 }
 
 // ============================================================

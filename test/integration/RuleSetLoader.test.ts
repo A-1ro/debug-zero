@@ -68,6 +68,19 @@ describe("RuleSetLoader: basic.yaml のパース", () => {
     expect(ruleSet.bugs.some(b => b.id === "Value-Corruption")).toBe(true);
   });
 
+  it("Control-Forbidden が Control系4戦略すべてを strategy_match で宣言すること（D8）", () => {
+    const bug = ruleSet.bugs.find(b => b.id === "Control-Forbidden")!;
+    expect(bug).toBeDefined();
+    expect(bug.effect.action.type).toBe("invalidate_strategy");
+    const matched = (bug.effect.constraints ?? [])
+      .filter(c => c.type === "strategy_match")
+      .map(c => (c as { strategyId: string }).strategyId);
+    expect(matched).toEqual(
+      expect.arrayContaining(["Control-Add", "Control-Sub", "Control-Mul", "Control-Div"]),
+    );
+    expect(matched).toHaveLength(4);
+  });
+
   it("Odd-Forbidden bug が含まれること", () => {
     expect(ruleSet.bugs.some(b => b.id === "Odd-Forbidden")).toBe(true);
   });

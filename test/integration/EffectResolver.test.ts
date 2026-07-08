@@ -121,6 +121,76 @@ describe("使用回数制限（A7: 1ゲーム1回）", () => {
   });
 });
 
+describe("D8: Control-Forbidden は Control系4戦略すべてを無効化する（yaml駆動）", () => {
+  // trigger card の operation は各 Control 戦略の change_operation.from に一致させる
+  const cases: { strategy: StrategyId; triggerOp: "add" | "sub" | "mul" | "div" }[] = [
+    { strategy: "Control-Add" as StrategyId, triggerOp: "sub" },
+    { strategy: "Control-Sub" as StrategyId, triggerOp: "add" },
+    { strategy: "Control-Div" as StrategyId, triggerOp: "mul" },
+    { strategy: "Control-Mul" as StrategyId, triggerOp: "div" },
+  ];
+
+  for (const { strategy, triggerOp } of cases) {
+    it(`${strategy}: Control-Forbidden有効なら候補から除外される`, () => {
+      const card = fieldCard(3, triggerOp, P1);
+      const game = makeGame({
+        field: [card],
+        setNumber: 13,
+        residualBugs: ["Control-Forbidden"],
+      });
+      const candidates = resolver.collectInterventionCandidates(
+        game,
+        { actorId: P1, triggerCard: card, ruleSet },
+        { [P2]: strategy },
+      );
+      expect(candidates).toEqual([]);
+    });
+
+    it(`${strategy}: Control-Forbidden有効なら applyIntervention は strategy_invalidated を返し効果を出さない`, () => {
+      const card = fieldCard(3, triggerOp, P1);
+      const game = makeGame({
+        field: [card],
+        setNumber: 13,
+        residualBugs: ["Control-Forbidden"],
+      });
+      const patch = resolver.applyIntervention(
+        game, P2, strategy,
+        { actorId: P1, triggerCard: card, ruleSet },
+      );
+      expect(patch.field).toBeUndefined(); // 演算は書き換わらない
+      expect(
+        (patch.appendEvents ?? []).some(
+          e => e.type === "strategy_invalidated"
+            && (e.payload as { reason?: string }).reason === "forbidden_bug"
+            && (e.payload as { strategyId?: string }).strategyId === strategy,
+        ),
+      ).toBe(true);
+    });
+  }
+
+  it("Control-Forbidden が無ければ Control-Sub は通常どおり候補に上がる（対照）", () => {
+    const card = fieldCard(3, "add", P1);
+    const game = makeGame({ field: [card], setNumber: 13, residualBugs: [] });
+    const candidates = resolver.collectInterventionCandidates(
+      game,
+      { actorId: P1, triggerCard: card, ruleSet },
+      { [P2]: "Control-Sub" as StrategyId },
+    );
+    expect(candidates).toEqual([{ playerId: P2, strategyId: "Control-Sub" }]);
+  });
+
+  it("他のForbiddenバグ（Hack-Forbidden）はControl戦略を無効化しない（マップの取り違え防止）", () => {
+    const card = fieldCard(3, "add", P1);
+    const game = makeGame({ field: [card], setNumber: 13, residualBugs: ["Hack-Forbidden"] });
+    const candidates = resolver.collectInterventionCandidates(
+      game,
+      { actorId: P1, triggerCard: card, ruleSet },
+      { [P2]: "Control-Sub" as StrategyId },
+    );
+    expect(candidates).toEqual([{ playerId: P2, strategyId: "Control-Sub" }]);
+  });
+});
+
 describe("alwaysトリガーのバグ（A8: Value-Corruption）", () => {
   it("on_card_playedの解決時に発動してeffectiveValueを書き換える", () => {
     const card = fieldCard(3, "add", P1);

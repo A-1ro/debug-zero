@@ -26,40 +26,48 @@ function makeGame(overrides: Partial<Game> = {}): Game {
   };
 }
 
-describe("autoActionFor — normal phase", () => {
-  it("引ける状況ではドローを選ぶ（勝敗や0カード分岐を避ける安全策）", () => {
-    const a = autoActionFor(makeGame(), P1, ruleSet);
-    expect(a).toEqual({ type: "draw_card" });
-  });
-
-  it("手札が満杯ならドローできず最小カードをsubで出す", () => {
-    const g = makeGame({ hands: { [P1]: ["5-001", "4-002", "3-002", "2-002", "1-001"], [P2]: [] } });
+describe("autoActionFor — normal phase (D10: 自発ドロー廃止・ランダム合法カード)", () => {
+  it("ドローではなく合法カードを1枚subで出す（自発ドローはレイド専用）", () => {
+    const g = makeGame({ hands: { [P1]: ["5-001", "2-001"], [P2]: [] } });
     const a = autoActionFor(g, P1, ruleSet);
-    expect(a).toEqual({ type: "play_card", cardId: "1-001", operation: "sub" });
+    // どのカードが選ばれるかはランダムだが、必ず手札のカードを sub で出す
+    expect(a?.type).toBe("play_card");
+    expect(a && a.type === "play_card" ? a.operation : null).toBe("sub");
+    expect(a && a.type === "play_card" ? ["5-001", "2-001"].includes(a.cardId) : false).toBe(true);
   });
 
-  it("山札が空ならドローできず最小カードをsubで出す", () => {
-    const g = makeGame({ deck: [], hands: { [P1]: ["7-001", "2-001"], [P2]: [] } });
-    const a = autoActionFor(g, P1, ruleSet);
-    expect(a).toEqual({ type: "play_card", cardId: "2-001", operation: "sub" });
-  });
-
-  it("プレイ時は0カードを避けて0以外の最小カードを出す（reset/raid選択待ちを防ぐ）", () => {
-    // 手札満杯・0を含む → 0ではなく1を出すべき
+  it("0カードを避けて0以外の合法カードを出す（reset/raid選択待ちを防ぐ）", () => {
+    // 0を含む手札 → 選ばれるのは必ず非0カード
     const g = makeGame({ hands: { [P1]: ["0-001", "5-001", "3-001", "1-001", "0-002"], [P2]: [] } });
-    const a = autoActionFor(g, P1, ruleSet);
-    expect(a).toEqual({ type: "play_card", cardId: "1-001", operation: "sub" });
+    for (let i = 0; i < 20; i++) {
+      const a = autoActionFor(g, P1, ruleSet);
+      expect(a?.type).toBe("play_card");
+      const cid = a && a.type === "play_card" ? a.cardId : "";
+      expect(["5-001", "3-001", "1-001"]).toContain(cid);
+    }
   });
 
   it("全部0カードのときは仕方なく0を出す（フォールバック）", () => {
     const g = makeGame({ deck: [], hands: { [P1]: ["0-001", "0-002"], [P2]: [] } });
     const a = autoActionFor(g, P1, ruleSet);
-    expect(a).toEqual({ type: "play_card", cardId: "0-001", operation: "sub" });
+    expect(a?.type).toBe("play_card");
+    const cid = a && a.type === "play_card" ? a.cardId : "";
+    expect(["0-001", "0-002"]).toContain(cid);
   });
 
-  it("手札も山札も無ければnull（代打不能）", () => {
+  it("合法カードが1枚も無ければ skip_turn を返す（全札が禁止バグ対象）", () => {
+    // Odd-Forbidden 有効・手札は全て奇数 → 合法カードゼロ → スキップ
+    const g = makeGame({
+      residualBugs: ["Odd-Forbidden"],
+      deck: [],
+      hands: { [P1]: ["5-001", "3-001", "1-001"], [P2]: [] },
+    });
+    expect(autoActionFor(g, P1, ruleSet)).toEqual({ type: "skip_turn" });
+  });
+
+  it("手札が空なら skip_turn（出せる札がない）", () => {
     const g = makeGame({ deck: [], hands: { [P1]: [], [P2]: [] } });
-    expect(autoActionFor(g, P1, ruleSet)).toBeNull();
+    expect(autoActionFor(g, P1, ruleSet)).toEqual({ type: "skip_turn" });
   });
 });
 
@@ -146,5 +154,22 @@ describe("autoActionFor — raid phase", () => {
     const g = raidBase({ hands: { [P1]: [], [P2]: ["7-001"] }, deck: ["5-001"] });
     const a = autoActionFor(g, P1, ruleSet);
     expect(a).toEqual({ type: "draw_card" });
+  });
+
+  // 凍結修正のシーム: ボスが手番で手札切れだと autoActionFor は null を返す
+  // （ボスはドロー・除去・スキップ不可）。この null は本来 GameEngine の
+  // ラウンド開始時補充で発生しないが、万一起きても RoomDurableObject.alarm は
+  // turnGuard を削除せず alarm を再設定する（belt-and-suspenders）＝凍結しない。
+  it("ボスが手番で手札切れなら null（DO 側で alarm 再設定＝凍結しない）", () => {
+    const g = raidBase({
+      hands: { [P1]: ["9-001"], [P2]: [] }, // P2=ボスが空
+      deck: [],
+      raidState: {
+        bossPlayerId: P2, bossHP: 14, playerHPs: { [P1]: 10 },
+        activeBugId: "", roundIndex: 1, turnOrder: [P1, P2], currentTurnIndex: 1, // ボス手番
+        bossActionsLeft: 1,
+      },
+    });
+    expect(autoActionFor(g, P2, ruleSet)).toBeNull();
   });
 });

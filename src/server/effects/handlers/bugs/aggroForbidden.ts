@@ -6,7 +6,7 @@ import type { EffectContext } from "../../../../shared/types/effects";
  * Trigger: (suppression only — handler never called via EffectResolver)
  *
  * Suppresses the Aggro strategy handler for the affected player.
- * Enforcement is in EffectResolver's strategy loop via FORBIDDEN_BUG_STRATEGY_MAP.
+ * Enforcement is in EffectResolver's strategy loop via the data-driven forbiddenBugStrategyMap (built from the ruleset invalidate_strategy + strategy_match constraints).
  *
  * Removal cost: HP -3.
  * (Cost is handled by GameEngine.applyRemoveBug via the bug's removalCost definition.)

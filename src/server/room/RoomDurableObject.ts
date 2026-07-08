@@ -947,11 +947,23 @@ export class RoomDurableObject implements DurableObject {
     if (!player) return;
 
     const auto = autoActionFor(game, player, ruleSet);
-    if (!auto) { await this.state.storage.delete("turnGuard"); return; }
+    // Robustness (belt-and-suspenders): a null auto-action must NEVER leave the
+    // alarm un-armed — that is exactly the hole that froze the room forever when
+    // the raid boss ran out of cards. The boss now refills each round (C ruling)
+    // so this should be unreachable, but if autoActionFor ever declines a move we
+    // re-arm a fresh window on the unchanged game instead of deleting the guard.
+    if (!auto) { await this.scheduleTurnAlarm(game, ruleSet); return; }
 
-    // Record a turn_timeout marker, then run the auto action through the normal
-    // apply+broadcast path (which will re-arm the next turn's alarm).
-    await this.applyAndBroadcast(room, session, game, auto, player);
+    // Run the auto action through the normal apply+broadcast path (which re-arms
+    // the next turn's alarm). Robustness (owner ruling 3): an invalid auto-action
+    // must never leave the alarm un-armed. autoActionFor already returns a legal
+    // fallback or skip_turn, so this should not fire — but if it ever does, re-arm
+    // a fresh window on the unchanged game rather than freezing the room forever.
+    await this.applyAndBroadcast(room, session, game, auto, player, {
+      onInvalid: async () => {
+        await this.scheduleTurnAlarm(game, ruleSet);
+      },
+    });
   }
 
   private async handleResetOrRaid(message: ClientMessage, _connectionId: string): Promise<void> {

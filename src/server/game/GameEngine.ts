@@ -9,6 +9,7 @@ import type {
   ShowdownSubmitAction,
   InterventionResponseAction,
   ChooseRaidBugAction,
+  SkipTurnAction,
   Operation,
   PlayerId,
   StrategyId,
@@ -22,7 +23,7 @@ import type {
 } from "../../shared/types/domain";
 import type { RuleSet, RemovalCost } from "../../shared/types/rules";
 import type { EffectContext } from "../../shared/types/effects";
-import { validate } from "./ActionValidator";
+import { validate, raidPlayerHasLegalMove, normalPlayerHasLegalMove } from "./ActionValidator";
 import { resolve as arithmeticResolve } from "./ArithmeticJudge";
 import { nextTurnIndex } from "./TurnManager";
 import {
@@ -447,72 +448,34 @@ function applyInterventionResponse(
 // ============================================================
 
 function applyDrawCard(game: Game, _action: DrawCardAction, ctx: EngineContext): Game {
-  const { actorId, ruleSet } = ctx;
+  const { actorId } = ctx;
 
-  // Raid refill (手札補充): draw one card, then pass the raid turn
-  if (game.phase === "raid" && game.raidState) {
-    const rs = game.raidState;
-    const [drawnCard, ...remainingDeck] = game.deck;
-    return applyPatch(game, {
-      deck:  remainingDeck,
-      hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
-      raidState: {
-        ...rs,
-        ...advanceRaidPlayerTurn(rs),
-      },
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "card_drawn",
-        actorId,
-        payload:   { cardId: drawnCard, raid: true },
-      }],
-    });
+  // D10 (owner ruling): self-draw (手札補充) is a raid-phase-only action.
+  // Normal-phase draws are rejected upstream by validateDrawCard; the normal
+  // hand auto-refills after each card play (see continueAfterCardEffects). This
+  // guard is defensive — applyAction never reaches here outside a raid.
+  const rs = game.raidState;
+  if (game.phase !== "raid" || !rs) {
+    return game;
   }
 
-  let gameAfterDraw = game;
-  if (game.deck.length > 0) {
-    const [drawnCard, ...remainingDeck] = game.deck;
-    const updatedHand = [...(game.hands[actorId] ?? []), drawnCard];
-    gameAfterDraw = applyPatch(game, {
-      deck:  remainingDeck,
-      hands: { ...game.hands, [actorId]: updatedHand },
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "card_drawn",
-        actorId,
-        payload:   { cardId: drawnCard },
-      }],
-    });
-  }
-
-  const gameAfterTurn = applyPatch(gameAfterDraw, {
-    currentTurnIndex: nextTurnIndex(gameAfterDraw),
+  // Raid refill: draw one card, then pass the raid turn
+  const [drawnCard, ...remainingDeck] = game.deck;
+  return applyPatch(game, {
+    deck:  remainingDeck,
+    hands: { ...game.hands, [actorId]: [...(game.hands[actorId] ?? []), drawnCard] },
+    raidState: {
+      ...rs,
+      ...advanceRaidPlayerTurn(rs),
+    },
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "card_drawn",
+      actorId,
+      payload:   { cardId: drawnCard, raid: true },
+    }],
   });
-
-  // Deck may have just run out — the deck-empty → showdown transition must
-  // fire on draws too, not only on card plays (otherwise the game stalls in
-  // normal phase until someone happens to play a card)
-  const transition = checkPhaseTransition(gameAfterTurn, ruleSet.phases);
-  if (transition && isPhaseTransition(transition.to)) {
-    return applyPatch(gameAfterTurn, {
-      phase: transition.to,
-      appendEvents: [{
-        id:        newEventId(),
-        timestamp: Date.now(),
-        type:      "phase_changed",
-        actorId:   "system",
-        payload: {
-          from:   gameAfterTurn.phase,
-          to:     transition.to,
-          reason: transition.conditionType,
-        },
-      }],
-    });
-  }
-
-  return gameAfterTurn;
 }
 
 // ============================================================
@@ -844,9 +807,40 @@ function aliveRaidPlayers(playerHPs: Record<PlayerId, number>): PlayerId[] {
 }
 
 /**
+ * Refill the boss's hand up to `targetSize` by drawing from the top of the deck
+ * (C ruling: レイド戦でボスも手札を補充する). Bounded by deck size — never draws
+ * more cards than exist. Returns updated hands/deck plus the cards drawn (empty
+ * when the boss is already at/above target or the deck is empty). Pure.
+ */
+function refillBossHand(
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+  bossPlayerId: PlayerId,
+  targetSize: number,
+): { hands: Record<PlayerId, CardId[]>; deck: CardId[]; drawn: CardId[] } {
+  const bossHand = hands[bossPlayerId] ?? [];
+  const need = Math.min(Math.max(0, targetSize - bossHand.length), deck.length);
+  if (need === 0) return { hands, deck, drawn: [] };
+  const drawn = deck.slice(0, need);
+  return {
+    hands: { ...hands, [bossPlayerId]: [...bossHand, ...drawn] },
+    deck:  deck.slice(need),
+    drawn,
+  };
+}
+
+/**
  * Begin a raid round once the bug is decided (D3): roll the 1D10 turn order,
- * activate the chosen bug, reset the boss action budget. Returns the fresh
- * RaidState plus residualBugs and the round-start events.
+ * activate the chosen bug, reset the boss action budget, and refill the boss's
+ * hand (C ruling). Returns the fresh RaidState plus residualBugs, updated
+ * hands/deck, and the round-start events.
+ *
+ * Boss refill (C ruling): mirrors how players top their hand up from the deck,
+ * but at each round's start (the boss's natural cadence — it acts as a burst of
+ * `bossActionsLeft` attacks, not a single draw-and-pass turn). The refill target
+ * is max(bossHandSize, bossActionsLeft) so the boss can always complete its
+ * attacks; the deck is recycled from the field at round end, so cards are
+ * available here. This makes the empty-handed-boss freeze unreachable.
  */
 function beginRaidRound(
   base: RaidState,
@@ -854,9 +848,19 @@ function beginRaidRound(
   residualBugs: BugId[],
   roundIndex: number,
   rng: () => number,
-): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+  bossHandSize: number,
+): {
+  raidState: RaidState;
+  residualBugs: BugId[];
+  events: EventLog[];
+  hands: Record<PlayerId, CardId[]>;
+  deck: CardId[];
+} {
   const alive = aliveRaidPlayers(base.playerHPs);
   const { order, diceResults } = rollRaidTurnOrder(alive, rng);
+  const bossActionsLeft = Math.ceil(alive.length / 2);
 
   const newResidual = chosenBug && !residualBugs.includes(chosenBug)
     ? [...residualBugs, chosenBug]
@@ -880,6 +884,23 @@ function beginRaidRound(
     payload:   { roundIndex, activeBugId: chosenBug, turnOrder: order, diceResults },
   });
 
+  // Boss refill (C ruling): top the boss hand up so it can make all its attacks.
+  const refill = refillBossHand(
+    hands,
+    deck,
+    base.bossPlayerId,
+    Math.max(bossHandSize, bossActionsLeft),
+  );
+  if (refill.drawn.length > 0) {
+    events.push({
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "boss_hand_refilled",
+      actorId:   "boss",
+      payload:   { count: refill.drawn.length, roundIndex, raid: true },
+    });
+  }
+
   const raidState: RaidState = {
     ...base,
     activeBugId:      chosenBug,
@@ -888,12 +909,18 @@ function beginRaidRound(
     diceResults,
     currentTurnIndex: 0,
     bossTurn:         false,
-    bossActionsLeft:  Math.ceil(alive.length / 2),
+    bossActionsLeft,
     awaitingBugChoice: false,
     bugCandidates:    undefined,
   };
 
-  return { raidState, residualBugs: newResidual, events };
+  return {
+    raidState,
+    residualBugs: newResidual,
+    events,
+    hands: refill.hands,
+    deck:  refill.deck,
+  };
 }
 
 /**
@@ -901,13 +928,31 @@ function beginRaidRound(
  * choose one (D2) — enter the awaiting-choice state and wait. Otherwise (every
  * bug already active) roll the turn order and begin immediately.
  */
+/**
+ * Optional data-driven floor for the boss's per-round hand refill (C ruling).
+ * Unset (0) means "refill to exactly the round's action budget" (bossActionsLeft);
+ * a positive value gives the boss a reserve above its budget. The effective
+ * target is computed in beginRaidRound as max(bossActionsLeft, this).
+ */
+function bossHandTarget(ruleSet: RuleSet): number {
+  return ruleSet.initialConfig.raidBossHandSize ?? 0;
+}
+
 function enterNextRaidRound(
   combat: { bossPlayerId: PlayerId; bossHP: number; playerHPs: Record<PlayerId, number> },
   residualBugs: BugId[],
   ruleSet: RuleSet,
   roundIndex: number,
   rng: () => number,
-): { raidState: RaidState; residualBugs: BugId[]; events: EventLog[] } {
+  hands: Record<PlayerId, CardId[]>,
+  deck: CardId[],
+): {
+  raidState: RaidState;
+  residualBugs: BugId[];
+  events: EventLog[];
+  hands: Record<PlayerId, CardId[]>;
+  deck: CardId[];
+} {
   const base: RaidState = {
     bossPlayerId:     combat.bossPlayerId,
     bossHP:           combat.bossHP,
@@ -922,12 +967,17 @@ function enterNextRaidRound(
 
   const candidates = raidBugCandidates(residualBugs, ruleSet);
   if (candidates.length === 0) {
-    return beginRaidRound(base, "", residualBugs, roundIndex, rng);
+    // No bug to choose → the round begins now, so refill the boss here.
+    return beginRaidRound(base, "", residualBugs, roundIndex, rng, hands, deck, bossHandTarget(ruleSet));
   }
+  // The boss must first pick a bug; the round (and boss refill) begins once the
+  // choice resolves in applyChooseRaidBug. Leave hands/deck untouched for now.
   return {
     raidState: { ...base, awaitingBugChoice: true, bugCandidates: candidates },
     residualBugs,
     events: [],
+    hands,
+    deck,
   };
 }
 
@@ -944,7 +994,7 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
   // Round 1: the boss chooses the bug (D2), then 1D10 decides the order (D3).
   const next = enterNextRaidRound(
     { bossPlayerId: actorId, bossHP, playerHPs },
-    game.residualBugs, ruleSet, 1, rng,
+    game.residualBugs, ruleSet, 1, rng, game.hands, game.deck,
   );
 
   // Clear the field — move all field card IDs to excludedCards
@@ -971,6 +1021,8 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
   return applyPatch(game, {
     phase:         "raid",
     field:         [],
+    hands:         next.hands,
+    deck:          next.deck,
     excludedCards: [...game.excludedCards, ...allFieldCardIds],
     residualBugs:  next.residualBugs,
     raidState:     next.raidState,
@@ -981,9 +1033,14 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
 /** D2: the boss's chosen bug resolves the awaiting state and begins the round. */
 function applyChooseRaidBug(game: Game, action: ChooseRaidBugAction, ctx: EngineContext): Game {
   const rs = game.raidState!; // validated upstream (awaitingBugChoice, boss, candidate)
-  const { rng = Math.random } = ctx;
-  const begun = beginRaidRound(rs, action.bugId, game.residualBugs, rs.roundIndex, rng);
+  const { ruleSet, rng = Math.random } = ctx;
+  const begun = beginRaidRound(
+    rs, action.bugId, game.residualBugs, rs.roundIndex, rng,
+    game.hands, game.deck, bossHandTarget(ruleSet),
+  );
   return applyPatch(game, {
+    hands:        begun.hands,
+    deck:         begun.deck,
     residualBugs: begun.residualBugs,
     raidState:    begun.raidState,
     appendEvents: begun.events,
@@ -1090,9 +1147,11 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       }
       const next = enterNextRaidRound(
         { bossPlayerId: rs.bossPlayerId, bossHP, playerHPs },
-        residualBugs, ruleSet, roundIndex + 1, rng,
+        residualBugs, ruleSet, roundIndex + 1, rng, newHands, deck,
       );
       residualBugs = next.residualBugs;
+      Object.assign(newHands, next.hands);
+      deck = next.deck;
       events.push(...next.events);
       const ns = next.raidState;
       turnOrder = ns.turnOrder;
@@ -1196,6 +1255,143 @@ function resolveRaidEnd(game: Game, actorId: PlayerId): Game {
 }
 
 // ============================================================
+// skip_turn (owner ruling 2)
+// ============================================================
+
+/**
+ * Skip the current (non-boss) raid player who has no legal move: advance the
+ * raid rotation to the next player (or the boss) and record a turn_skipped
+ * event. Validated upstream (validateSkipTurn). The applyAction post-pass then
+ * cascades through any further stuck players.
+ */
+function applySkipTurn(game: Game, ctx: EngineContext): Game {
+  // D10: normal-phase skip — the current player has no legal card to play and
+  // self-draw is illegal. Advance the turn and record the skip.
+  if (game.phase === "normal") {
+    return applyPatch(game, {
+      currentTurnIndex: nextTurnIndex(game),
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: ctx.actorId, reason: "no_legal_move" },
+      }],
+    });
+  }
+
+  const rs = game.raidState!; // validated upstream
+  const adv = advanceRaidPlayerTurn(rs);
+  return applyPatch(game, {
+    raidState: {
+      ...rs,
+      turnOrder:        adv.turnOrder,
+      currentTurnIndex: adv.currentTurnIndex,
+      bossTurn:         adv.bossTurn,
+    },
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "turn_skipped",
+      actorId:   "system",
+      payload:   { playerId: ctx.actorId, reason: "no_legal_move", roundIndex: rs.roundIndex },
+    }],
+  });
+}
+
+/**
+ * Owner ruling 2 (proactive skip + deadlock fix): while the raid turn is on a
+ * non-boss player who has zero legal moves (all cards forbidden, no draw, no
+ * affordable removal), advance past them and emit turn_skipped. Cascades until
+ * a player with a legal move is on the clock, or the boss's turn begins, or the
+ * bug-choice wait is reached. Guarantees the raid can never freeze on a
+ * fully-forbidden hand. Pure function.
+ */
+function skipStuckRaidPlayers(game: Game, ruleSet: RuleSet): Game {
+  let g = game;
+  let guard = 0;
+  while (g.raidState && g.phase === "raid" && g.status === "in-progress") {
+    const rs = g.raidState;
+    if (rs.awaitingBugChoice || rs.bossTurn) break;
+    const actor = rs.turnOrder[rs.currentTurnIndex];
+    if (actor === undefined) break;
+    if (raidPlayerHasLegalMove(g, actor, ruleSet)) break;
+    // Safety net: currentTurnIndex only increases here, but never loop forever.
+    if (guard++ > rs.turnOrder.length) break;
+    const adv = advanceRaidPlayerTurn(rs);
+    g = applyPatch(g, {
+      raidState: {
+        ...rs,
+        turnOrder:        adv.turnOrder,
+        currentTurnIndex: adv.currentTurnIndex,
+        bossTurn:         adv.bossTurn,
+      },
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: actor, reason: "no_legal_move", roundIndex: rs.roundIndex },
+      }],
+    });
+  }
+  return g;
+}
+
+/**
+ * D10 (owner ruling): while the normal-phase turn is on a player who has zero
+ * legal moves (every card bug-forbidden; self-draw is illegal), advance past
+ * them and emit turn_skipped. Cascades until a player with a legal move is on
+ * the clock. If a FULL rotation is skipped without anyone able to move (total
+ * deadlock — e.g. both Odd- and Even-Forbidden active), the game is forced to
+ * the showdown phase so it resolves instead of skipping forever (adopted ruling;
+ * the old code drained the deck via draws to reach showdown, which draw removal
+ * would otherwise strand). Pure function. Never runs while an intervention is
+ * pending or a reset_or_raid choice is owed.
+ */
+function skipStuckNormalPlayers(game: Game, _ruleSet: RuleSet): Game {
+  let g = game;
+  let skipped = 0;
+  while (
+    g.phase === "normal" &&
+    g.status === "in-progress" &&
+    !g.pendingIntervention
+  ) {
+    const actor = g.turnOrder[g.currentTurnIndex];
+    if (actor === undefined) break;
+    if (normalPlayerHasLegalMove(g, actor)) break;
+
+    if (skipped >= g.turnOrder.length) {
+      // Went a full lap and nobody can move → force showdown to resolve.
+      g = applyPatch(g, {
+        phase: "showdown",
+        appendEvents: [{
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "phase_changed",
+          actorId:   "system",
+          payload:   { from: "normal", to: "showdown", reason: "normal_deadlock" },
+        }],
+      });
+      break;
+    }
+
+    g = applyPatch(g, {
+      currentTurnIndex: nextTurnIndex(g),
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: actor, reason: "no_legal_move" },
+      }],
+    });
+    skipped++;
+  }
+  return g;
+}
+
+// ============================================================
 // applyAction — main entry point
 // ============================================================
 
@@ -1218,23 +1414,43 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
     throw new Error(validation.errorCode ?? "INVALID_ACTION");
   }
 
+  let result: Game;
   switch (action.type) {
     case "play_card":
-      return applyPlayCard(game, action, ctx);
+      result = applyPlayCard(game, action, ctx); break;
     case "draw_card":
-      return applyDrawCard(game, action, ctx);
+      result = applyDrawCard(game, action, ctx); break;
     case "remove_bug":
-      return applyRemoveBug(game, action, ctx);
+      result = applyRemoveBug(game, action, ctx); break;
     case "reset_or_raid":
-      return applyResetOrRaid(game, action, ctx);
+      result = applyResetOrRaid(game, action, ctx); break;
     case "showdown_submit":
-      return applyShowdownSubmit(game, action, ctx);
+      result = applyShowdownSubmit(game, action, ctx); break;
     case "intervention_response":
-      return applyInterventionResponse(game, action, ctx);
+      result = applyInterventionResponse(game, action, ctx); break;
     case "choose_raid_bug":
-      return applyChooseRaidBug(game, action, ctx);
+      result = applyChooseRaidBug(game, action, ctx); break;
+    case "skip_turn":
+      result = applySkipTurn(game, ctx); break;
     case "select_strategy":
       // select_strategy is a session-level action; GameEngine returns game unchanged
-      return game;
+      result = game; break;
   }
+
+  // Owner ruling 2 (deadlock fix): after any raid action, proactively skip any
+  // non-boss player who is now on the clock with zero legal moves so the game
+  // never stalls on a fully bug-forbidden hand.
+  if (result.phase === "raid" && result.status === "in-progress" && result.raidState) {
+    result = skipStuckRaidPlayers(result, ctx.ruleSet);
+  } else if (
+    result.phase === "normal" &&
+    result.status === "in-progress" &&
+    !result.pendingIntervention
+  ) {
+    // D10 (deadlock fix): after any normal-phase action, proactively skip any
+    // player now on the clock with zero legal moves so the game never stalls on
+    // a fully bug-forbidden hand (self-draw is no longer a legal escape).
+    result = skipStuckNormalPlayers(result, ctx.ruleSet);
+  }
+  return result;
 }

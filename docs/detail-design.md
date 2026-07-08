@@ -692,6 +692,8 @@ Room ──→ Session ──→ Game[]
           → 0以外: カード補充 → checkPhaseTransition()
             → 山札空: [決戦フェーズ]
             → 継続: 次プレイヤーへ
+                    （次のプレイヤーが詰みなら自動スキップ。「通常フェーズの
+                      手番スキップ（D10）」参照）
 
 [0カード選択待機]
   ─ client:reset_or_raid (reset)
@@ -720,15 +722,115 @@ Room ──→ Session ──→ Game[]
      → サーバ権威で各プレイヤーに1D10を振る。同値は当該プレイヤーのみ
        振り直して順位を確定。ボスは手番順に含まない（turnOrder はプレイヤーのみ）。
        server:raid_round_started に turnOrder と diceResults を載せて配信。
+     → このラウンド開始時にボスの手札を山札から補充する（下記「ボスの手札補充」/C）。
+       server:action_result 内の raidState 更新と boss_hand_refilled イベントで反映。
   3. プレイヤー手番サイクル:
      各プレイヤーが「カードを出す」「バグ除去」「手札補充」から1選択
+     → 合法手が1つも無いプレイヤーは自動スキップ（下記「ボス免除」「手番スキップ」参照）
   4. ボス行動: ceil(playerCount/2) 回カードを出す（raidState.bossTurn=true）
+     → ボスはバグの影響を受けない（下記「ボス免除」）
   5. 山札空なら場を山札に戻してシャッフル
   6. checkRaidEnd()
      → ボスHP <= 0: WinResult(raid_boss_*) → game.status = "finished"
      → 全プレイヤーHP <= 0: WinResult(raid_all_players_dead) → session 終了
      → 継続: [レイド戦ラウンド] (roundIndex++、step1 のバグ選択待ちへ)
 ```
+
+#### ボス免除（オーナー裁定1）
+
+レイド戦のボスは **バグの影響を受けない**。特にパリティ禁止系（Odd-Forbidden /
+Even-Forbidden）や Stack-Forbidden の「出せるカード」制約は、ボスのカードプレイには
+一切適用しない。実装は `ActionValidator.checkForbiddenBugs(game, value, isBoss)` が
+`isBoss=true`（`actorId === raidState.bossPlayerId`）のとき常に合法を返す形で、
+バグIDをハードコードせずコンテキスト（`isBoss`）で分岐する。非ボスプレイヤーには
+従来どおり禁止制約が適用される。
+
+#### ボスの手札補充（オーナー裁定C）
+
+レイド戦のボスも **手札を補充する**。長時間レイドでボスが手札を出し切ると、次の
+ボス手番でカードを出せず（ボスは draw / remove_bug / skip_turn いずれも不可）、
+`AutoAction.autoActionFor` が `null` を返して手番が進まない恒久フリーズが起きていた。
+これを解消するため、プレイヤーの手札補充と一貫する形で **各ラウンド開始時に山札から
+ボスの手札を補充する**。
+
+- **タイミング**: プレイヤーが単発の手番で draw して手番を渡すのに対し、ボスの手番は
+  `ceil(生存者/2)` 回の連続攻撃（bossTurn）である。したがってボスの補充は「1回引いて
+  パス」ではなく **ラウンド開始（`beginRaidRound`）で一括トップアップ** する。ラウンド頭は
+  ボスがそのラウンドの行動回数ぶんの手札を必要とする自然な補充点であり、山札は直前の
+  ラウンド終了時に場から再構築されるため、ここでは引く札が用意されている。
+- **補充目標**: `max(raidBossHandSize, bossActionsLeft=ceil(生存者/2))`。行動回数を必ず
+  満たすので、ボスがそのラウンドの攻撃を出し切れることを保証する。山札の枚数で上限を
+  かけ、山札より多くは引かない（純粋関数 `refillBossHand`）。
+- **データ駆動**: `raidBossHandSize` は `initialConfig`（`rules/basic.yaml`）で指定できる
+  任意の下限。未指定（0扱い）なら「行動回数ちょうど」を補充し、プレイヤーの引き分（山札）を
+  過剰に奪わない最小補充になる。ボスに予備を持たせたいときだけ正の値を設定する。
+- 補充が発生したラウンドは `boss_hand_refilled`（`actorId: "boss"`, `payload.count`）
+  イベントを記録する。
+
+これによりボス手番で手札切れ→`autoActionFor` が `null`、という凍結条件は実質的に
+発生しなくなる（保険として下記「タイムアウト代打の頑健性」で `null` でも alarm を
+再武装する）。
+
+#### 手番スキップ（オーナー裁定2）
+
+非ボスの手番プレイヤーが **合法手を1つも持たない**場合、そのプレイヤーの手番を
+サーバがスキップして次のプレイヤー（全員済みならボス）へ進める。「合法手なし」とは
+次の3条件が同時に成立する状態:
+
+1. 手札のすべてのカードが有効な禁止バグに触れて出せない
+2. 手札補充（draw）が不可（山札が空 or 手札が上限に達している）
+3. 支払える残バグ除去（remove_bug）が無い（除去コストを満たせない／持ち越しバグのみ）
+
+スキップは `GameEngine` が各レイドアクション適用後に純粋関数
+`skipStuckRaidPlayers()` で先回り解決し、`turn_skipped`（`reason: "no_legal_move"`）
+イベントを記録する。イベントと更新後の手番（`server:action_result` の
+`turnOrder`/`currentTurnIndex`）で全クライアント/ボットが追従できる。判定の正本は
+`ActionValidator.raidPlayerHasLegalMove()`。サーバ生成専用の `skip_turn` アクションも
+あり（`validateSkipTurn` は合法手がある場合 `ACTION_NO_LEGAL_MOVE` で拒否）、
+タイムアウト代打（`AutoAction`）はこの `skip_turn` を返す。
+
+#### タイムアウト代打の頑健性（オーナー裁定3）
+
+手番タイムアウトの自動アクション（`AutoAction.autoActionFor`）は、禁止カードを
+選んで無効になることが無いようにする。非ボスの詰み手札では `skip_turn` を、
+それ以外は合法カード／補充／支払える除去を返す。万一 DO の alarm 経路で自動
+アクションが無効化されても、`applyAndBroadcast` の `onInvalid` で alarm を必ず
+再武装し、ゲームが恒久フリーズしないようにする。
+
+さらに **`autoActionFor` が `null` を返す場合でも alarm を再武装する**（`RoomDurableObject.alarm`）。
+以前は `null` のとき `turnGuard` を削除して return していたため、alarm が二度と鳴らず
+恒久フリーズしていた（レイドのボス手札切れがこの経路を踏んだ）。ボスの手札補充（裁定C）で
+`null` は実質発生しなくなったが、belt-and-suspenders として `null` 時も
+`scheduleTurnAlarm` で不変のゲームに新しい手番ウィンドウを張り直す。
+
+#### 通常フェーズの自発ドロー廃止と手番スキップ（D10）
+
+**自発ドローはレイド戦専用（D10 オーナー裁定）。** 手札補充（`draw_card`）は
+レイド戦フェーズだけの行動で、通常（および決戦）フェーズでは違法。
+`ActionValidator.validateDrawCard` は通常フェーズの `draw_card` を
+`ACTION_INVALID_PHASE` で拒否する。通常フェーズの手札はカードプレイ後の自動補充
+（`continueAfterCardEffects` の補充ドロー）だけで維持される。
+
+これに伴い、通常フェーズでも**合法手ゼロの詰み手番**が起こり得る（禁止バグで手札の
+全カードが出せず、自発ドローという逃げ道も無い状態）。ルール文書に通常フェーズの
+詰み手番の規定は無いため、レイド戦と同じ扱い（`turn_skipped` /
+`reason: "no_legal_move"`）を採用する:
+
+- 判定の正本は `ActionValidator.normalPlayerHasLegalMove()`。手札に出せるカードが
+  1枚も無く（`isNormalCardPlayable` が全て false）、かつ 0カードの `reset_or_raid`
+  選択待ちでもないとき「合法手なし」。
+- `GameEngine` が各通常フェーズアクション適用後に純粋関数
+  `skipStuckNormalPlayers()` で先回り解決し、詰みプレイヤーを飛ばして次へ進める。
+  サーバ生成専用の `skip_turn`（通常フェーズ）も `validateSkipTurn` が受理する
+  （合法手がある場合は `ACTION_NO_LEGAL_MOVE`）。
+- **全員が詰み**（例: Odd-Forbidden と Even-Forbidden が同時に有効で全カードが禁止）の
+  場合、1周スキップしても誰も動けないため、ゲームを決戦フェーズへ強制遷移させて
+  決着させる（`phase_changed` / `reason: "normal_deadlock"`）。旧実装は自発ドローで
+  山札を枯らして決戦へ移行できたが、D10でドローを廃止したためこの強制遷移で代替する。
+
+タイムアウト代打（`AutoAction.autoActionFor`）は通常フェーズで、合法カードがあれば
+**ランダムな1枚を sub で出し**（オーナー裁定「ランダムにカードを1枚出す」・0カードは
+選択待ちを生むので非0を優先）、合法カードが無ければ `skip_turn` を返す。
 
 ### 5.4 接続状態遷移
 
@@ -1340,9 +1442,19 @@ Forbidden で除外されたプレイヤーの strategy_invalidated イベント
 自動発動のまま。
 
 **Forbidden 系バグと戦略の相互作用**:
-- `Control-Forbidden` が有効: `EffectResolver` で Control 系ハンドラを呼び出す前に除外
+- `Control-Forbidden` が有効: `EffectResolver` で Control 系ハンドラ（Control-Add /
+  Control-Sub / Control-Mul / Control-Div の **4つすべて**）を呼び出す前に除外
 - `Aggro-Forbidden` が有効: Aggro ハンドラを呼び出す前に除外
-- 除外した場合は `strategy_invalidated` イベントを記録
+- `Hack-Forbidden` / `TrickStar-Forbidden` も同様に対応する戦略を除外
+- 除外した場合は `strategy_invalidated` イベント（`reason: "forbidden_bug"`）を記録
+
+**「Forbiddenバグ→無効化する戦略」の対応は yaml 駆動（D8/D12）**: ハードコードの
+対応表を持たず、`EffectResolver.forbiddenBugStrategyMap()` が ruleset から動的に構築する。
+各 Forbidden バグは `effect.action.type = "invalidate_strategy"` を持ち、無効化対象を
+`constraints` の `strategy_match`（`strategyId`）で列挙する。`Control-Forbidden` は
+`rules/basic.yaml` で strategy_match を **4件**（Control-Add/Sub/Mul/Div）宣言しており、
+これが実装の意図（Control 系すべてを無効化）と一致する。新しい Forbidden バグや対象戦略の
+追加は yaml の編集だけで済み、`EffectResolver` のコード変更は不要。
 
 ### 8.4 各戦略カード効果の詳細仕様
 
@@ -1386,13 +1498,18 @@ Forbidden で除外されたプレイヤーの strategy_invalidated イベント
 
 ### 8.5 各バグカード効果の詳細仕様
 
+> **レイド戦のボス免除（オーナー裁定1）**: 以下の禁止系バグ（Odd/Even/Stack-Forbidden）の
+> カードプレイ制約は、レイド戦の**ボスには適用しない**。`checkForbiddenBugs(game, value, isBoss)`
+> が `isBoss=true` で常に合法を返す。詰み手番プレイヤーの自動スキップと合わせて §5.3
+> 「ボス免除」「手番スキップ」を参照。
+
 #### Odd-Forbidden / Even-Forbidden
 - **トリガー**: `always`
-- **処理**: `ActionValidator` で `card.value % 2 === parity` のカードを `ACTION_BUG_FORBIDDEN` エラーで拒否
+- **処理**: `ActionValidator` で `card.value % 2 === parity` のカードを `ACTION_BUG_FORBIDDEN` エラーで拒否（**非ボスのみ**）
 - **除去コスト**: 偶数（Odd-Forbidden）または奇数（Even-Forbidden）手札カード1枚を `game.excludedCards` へ移動
 
 #### Stack-Forbidden
-- **処理**: `ActionValidator` で `card.rawValue === field[-1].rawValue` の場合 `ACTION_BUG_FORBIDDEN` エラー
+- **処理**: `ActionValidator` で `card.rawValue === field[-1].rawValue` の場合 `ACTION_BUG_FORBIDDEN` エラー（**非ボスのみ**）
 - **除去コスト**: HP -3（`raidState.playerHPs[actorId] -= 3`）
 
 #### Aggro/Control/Hack/TrickStar-Forbidden
