@@ -63,6 +63,38 @@ describe("autoActionFor — normal phase", () => {
   });
 });
 
+describe("autoActionFor — 介入オファー待ち（A1）", () => {
+  const card = {
+    cardId: "3-001", playerId: P2, operation: "add" as const,
+    rawValue: 3, effectiveValue: 3,
+  };
+  const pendingGame = (responses: Record<PlayerId, boolean> = {}) => makeGame({
+    field: [card],
+    pendingIntervention: {
+      triggerCard: card,
+      actorId: P2,
+      setNumberBefore: 7,
+      candidates: [{ playerId: P1, strategyId: "Control-Sub" }],
+      responses,
+    },
+  });
+
+  it("未応答の候補者にはパス（intervention_response activate:false）を返す", () => {
+    const a = autoActionFor(pendingGame(), P1, ruleSet);
+    expect(a).toEqual({ type: "intervention_response", activate: false });
+  });
+
+  it("応答済みの候補者にはnull", () => {
+    const a = autoActionFor(pendingGame({ [P1]: false }), P1, ruleSet);
+    expect(a).toBeNull();
+  });
+
+  it("候補者でないプレイヤーにはnull（介入待ち中は他の代打もしない）", () => {
+    const a = autoActionFor(pendingGame(), P2, ruleSet);
+    expect(a).toBeNull();
+  });
+});
+
 describe("autoActionFor — showdown phase", () => {
   it("手札の最小カード1枚を提出する", () => {
     const g = makeGame({ phase: "showdown", hands: { [P1]: ["8-001", "3-001"], [P2]: [] } });

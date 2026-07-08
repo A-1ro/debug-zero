@@ -155,6 +155,9 @@ function parseTimeouts(raw: Raw): TurnTimeouts | undefined {
     normal:   assertPositiveInt(raw?.normal,   "timeouts.normal"),
     showdown: assertPositiveInt(raw?.showdown, "timeouts.showdown"),
     raid:     assertPositiveInt(raw?.raid,     "timeouts.raid"),
+    ...(raw?.intervention != null
+      ? { intervention: assertPositiveInt(raw.intervention, "timeouts.intervention") }
+      : {}),
   };
 }
 

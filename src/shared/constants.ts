@@ -27,6 +27,9 @@ export const ACTION_RESET_LIMIT_EXCEEDED      = "ACTION_RESET_LIMIT_EXCEEDED";
 export const ACTION_INVALID_BUG_REMOVAL_COST  = "ACTION_INVALID_BUG_REMOVAL_COST";
 export const ACTION_INVALID_PHASE             = "ACTION_INVALID_PHASE";
 export const ACTION_ALREADY_SUBMITTED         = "ACTION_ALREADY_SUBMITTED";
+// A1: intervention offers (optional activation of on_card_played_by_other strategies)
+export const ACTION_INTERVENTION_PENDING      = "ACTION_INTERVENTION_PENDING";
+export const ACTION_NO_PENDING_INTERVENTION   = "ACTION_NO_PENDING_INTERVENTION";
 
 // WebSocket errors
 export const WS_DUPLICATE_MESSAGE  = "WS_DUPLICATE_MESSAGE";

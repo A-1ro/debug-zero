@@ -266,7 +266,11 @@ describe("hack handler", () => {
       hands: { [P1]: ["4-002"], [P2]: [] },
     };
 
-    const g = applyAction(game, { type: "play_card", cardId: "4-002", operation: "add" }, ctx);
+    // A1: 介入は任意発動 — プレイ直後はオファー待ちになり、P2 の accept で発動する
+    const pending = applyAction(game, { type: "play_card", cardId: "4-002", operation: "add" }, ctx);
+    expect(pending.pendingIntervention?.candidates).toEqual([{ playerId: P2, strategyId: "Hack" }]);
+
+    const g = applyAction(pending, { type: "intervention_response", activate: true }, { ...ctx, actorId: P2 });
 
     const stolen = g.field.find(fc => fc.cardId === "4-002")!;
     expect(stolen.playerId).toBe(P2);
@@ -379,7 +383,11 @@ describe("div演算の巻き戻し（D4）", () => {
       hands: { [P1]: ["3-002"], [P2]: [] },
     };
 
-    const g = applyAction(game, { type: "play_card", cardId: "3-002", operation: "div" }, ctx);
+    // A1: 介入は任意発動 — プレイ直後はオファー待ちになり、P2 の accept で発動する
+    const pending = applyAction(game, { type: "play_card", cardId: "3-002", operation: "div" }, ctx);
+    expect(pending.pendingIntervention?.candidates).toEqual([{ playerId: P2, strategyId: "TrickStar" }]);
+
+    const g = applyAction(pending, { type: "intervention_response", activate: true }, { ...ctx, actorId: P2 });
 
     expect(g.setNumber).toBe(10); // 12（近似逆算）ではない
     expect(g.field.some(fc => fc.cardId === "3-002")).toBe(false); // 除去済み

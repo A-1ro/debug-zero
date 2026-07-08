@@ -697,9 +697,40 @@ export class RoomDurableObject implements DurableObject {
         turnOrder: updatedGame.turnOrder,
         currentTurnIndex: updatedGame.currentTurnIndex,
         events: newEvents,
+        // A1: bare boolean only — candidate identities/strategies stay hidden
+        ...(updatedGame.pendingIntervention ? { interventionPending: true } : {}),
       },
       visibility: "all",
     }, room);
+
+    // A1: a play just opened an intervention window — privately offer the
+    // choice to each candidate (visibility="player"; strategies are secret).
+    if (
+      updatedGame.status === "in-progress" &&
+      updatedGame.pendingIntervention &&
+      !game.pendingIntervention
+    ) {
+      const pi = updatedGame.pendingIntervention;
+      const timeoutMs = ruleSet.timeouts?.intervention ?? 5000;
+      const deadline = Date.now() + timeoutMs;
+      for (const candidate of pi.candidates) {
+        await this.broadcast({
+          id: crypto.randomUUID() as MessageId,
+          type: "server:intervention_offer",
+          roomId: room.id,
+          gameId: updatedGame.id,
+          payload: {
+            gameId: updatedGame.id,
+            triggerCard: pi.triggerCard,
+            strategyId: candidate.strategyId,
+            timeoutMs,
+            deadline,
+          },
+          visibility: "player",
+          targetPlayerId: candidate.playerId,
+        }, room);
+      }
+    }
 
     // Send updated hands to every player whose hand changed (reset redeals all,
     // Hack/TrickStar mutate other players' hands — not just the actor's).
@@ -754,11 +785,19 @@ export class RoomDurableObject implements DurableObject {
 
   private turnTimeoutMs(game: Game, ruleSet: RuleSet): number {
     const t = ruleSet.timeouts ?? { normal: 45000, showdown: 30000, raid: 30000 };
+    // A1: intervention responses have their own (short) window — 5s ruling
+    if (game.pendingIntervention) return t.intervention ?? 5000;
     return game.phase === "showdown" ? t.showdown : game.phase === "raid" ? t.raid : t.normal;
   }
 
   /** The player currently on the clock (raid uses raidState's rotation). */
   private currentClockPlayer(game: Game): PlayerId | undefined {
+    // A1: while an intervention offer is pending, the clock is on the first
+    // candidate who hasn't responded yet (auto-pass target on timeout).
+    if (game.pendingIntervention) {
+      const pi = game.pendingIntervention;
+      return pi.candidates.find((c) => !(c.playerId in pi.responses))?.playerId;
+    }
     if (game.phase === "raid" && game.raidState) {
       return game.raidState.turnOrder[game.raidState.currentTurnIndex];
     }
@@ -776,7 +815,14 @@ export class RoomDurableObject implements DurableObject {
   private async scheduleTurnAlarm(game: Game, ruleSet: RuleSet): Promise<void> {
     const player = this.currentClockPlayer(game);
     if (!player) { await this.state.storage.deleteAlarm(); return; }
-    const deadline = Date.now() + this.turnTimeoutMs(game, ruleSet);
+    let deadline = Date.now() + this.turnTimeoutMs(game, ruleSet);
+    // A1: all candidates of one intervention offer share a single 5s deadline —
+    // an early response must NOT extend the window for the remaining candidates.
+    if (game.pendingIntervention) {
+      const prev = await this.state.storage.get<{ turnKey: string; deadline: number }>("turnGuard");
+      const prefix = `intervention:${game.pendingIntervention.triggerCard.cardId}:`;
+      if (prev?.turnKey.startsWith(prefix)) deadline = prev.deadline;
+    }
     // guard lets alarm() detect stale fires (turn already moved on)
     await this.state.storage.put("turnGuard", {
       gameId: game.id,
@@ -790,6 +836,11 @@ export class RoomDurableObject implements DurableObject {
 
   /** A value that changes whenever the turn advances (for stale-alarm detection). */
   private turnKey(game: Game): string {
+    // A1: changes per response so a fresh alarm can be armed after each auto-pass
+    if (game.pendingIntervention) {
+      const pi = game.pendingIntervention;
+      return `intervention:${pi.triggerCard.cardId}:${Object.keys(pi.responses).length}`;
+    }
     if (game.phase === "raid" && game.raidState) {
       return `raid:${game.raidState.roundIndex}:${game.raidState.currentTurnIndex}`;
     }
@@ -1031,6 +1082,9 @@ export class RoomDurableObject implements DurableObject {
       resetCount: game.resetCount,
       residualBugs: game.residualBugs,
       raidState: game.raidState,
+      // A1: boolean only — pendingIntervention details (candidates/strategies)
+      // are secret and must not reach clients
+      ...(game.pendingIntervention ? { interventionPending: true } : {}),
       events: game.events,
     };
 

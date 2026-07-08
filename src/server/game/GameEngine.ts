@@ -7,6 +7,7 @@ import type {
   RemoveBugAction,
   ResetOrRaidAction,
   ShowdownSubmitAction,
+  InterventionResponseAction,
   Operation,
   PlayerId,
   StrategyId,
@@ -113,6 +114,10 @@ export function applyPatch(game: Game, patch: GamePatch): Game {
     ...(patch.raidState !== undefined && {
       raidState: patch.raidState === null ? undefined : patch.raidState,
     }),
+    // pendingIntervention: null means clear; undefined means no change
+    ...(patch.pendingIntervention !== undefined && {
+      pendingIntervention: patch.pendingIntervention === null ? undefined : patch.pendingIntervention,
+    }),
     events: patch.appendEvents
       ? [...game.events, ...patch.appendEvents]
       : game.events,
@@ -184,14 +189,63 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
   const ownPatch = effectResolver.resolve(gameAfterCard, "on_card_played", effectCtx, playerStrategies);
   gameAfterCard = applyPatch(gameAfterCard, ownPatch);
 
-  // 2. Other players' strategy effects (on_card_played_by_other)
-  const otherPatch = effectResolver.resolve(gameAfterCard, "on_card_played_by_other", effectCtx, playerStrategies);
-  gameAfterCard = applyPatch(gameAfterCard, otherPatch);
+  // 2. Other players' intervention strategies (on_card_played_by_other) are
+  //    OPTIONAL (owner ruling A1): instead of auto-resolving, offer the choice
+  //    to every candidate and wait. The turn does NOT advance and no
+  //    replacement card is drawn until all candidates respond (or time out).
+  //    Zero candidates → continue immediately with no waiting at all.
+  const candidates = effectResolver.collectInterventionCandidates(
+    gameAfterCard, effectCtx, playerStrategies,
+  );
+  if (candidates.length > 0) {
+    return applyPatch(gameAfterCard, {
+      pendingIntervention: {
+        triggerCard:     gameAfterCard.field[gameAfterCard.field.length - 1],
+        actorId,
+        setNumberBefore: arith.before,
+        candidates,
+        responses:       {},
+      },
+    });
+  }
+
+  return continueAfterCardEffects(gameAfterCard, {
+    cardId:          action.cardId,
+    value,
+    actorId,
+    setNumberBefore: arith.before,
+    isAggroActive,
+    ruleSet,
+  });
+}
+
+// ============================================================
+// Shared play_card continuation (post-effect resolution)
+// ============================================================
+
+/**
+ * Everything that happens after a played card's effects are settled:
+ * Aggro bust check → 0-card wait → setNumber==0 win → replacement draw →
+ * turn advance → phase transition. Shared by the no-candidate play_card path
+ * and the intervention-resolution path (A1).
+ */
+function continueAfterCardEffects(
+  gameAfterCard: Game,
+  params: {
+    cardId:          CardId;
+    value:           number;
+    actorId:         PlayerId;
+    setNumberBefore: number;
+    isAggroActive:   boolean;
+    ruleSet:         RuleSet;
+  },
+): Game {
+  const { cardId, value, actorId, setNumberBefore, isAggroActive, ruleSet } = params;
 
   // ── Aggro bust: eliminate actor when Aggro causes setNumber < 0 ─
   // Non-Aggro players going negative is allowed (game continues).
   if (gameAfterCard.setNumber < 0 && isAggroActive) {
-    const survivingPlayers = game.turnOrder.filter(pid => pid !== actorId);
+    const survivingPlayers = gameAfterCard.turnOrder.filter(pid => pid !== actorId);
     const eliminatedEvent = {
       id:        newEventId(),
       timestamp: Date.now(),
@@ -232,14 +286,14 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
     }
 
     // Multiple players survive — undo the bust and continue
-    const nextTurnIdx = game.currentTurnIndex % survivingPlayers.length;
+    const nextTurnIdx = gameAfterCard.currentTurnIndex % survivingPlayers.length;
     return applyPatch(gameAfterCard, {
       turnOrder:        survivingPlayers,
       currentTurnIndex: nextTurnIdx,
-      setNumber:        arith.before,
+      setNumber:        setNumberBefore,
       // Remove the bust card by cardId (not slice) to be safe against future field effects
-      field:            gameAfterCard.field.filter(fc => fc.cardId !== action.cardId),
-      excludedCards:    [...gameAfterCard.excludedCards, action.cardId],
+      field:            gameAfterCard.field.filter(fc => fc.cardId !== cardId),
+      excludedCards:    [...gameAfterCard.excludedCards, cardId],
       hands:            handsWithoutActor,
       appendEvents:     [eliminatedEvent],
     });
@@ -310,7 +364,7 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
           type:      "phase_changed",
           actorId:   "system",
           payload: {
-            from:   game.phase,
+            from:   gameAfterCard.phase,
             to:     transition.to,
             reason: transition.conditionType,
           },
@@ -320,6 +374,69 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
   }
 
   return gameAfterTurn;
+}
+
+// ============================================================
+// intervention_response (A1)
+// ============================================================
+
+/**
+ * Record one candidate's accept/pass. When every candidate has responded,
+ * resolve the accepted interventions in candidate order (turn order starting
+ * after the actor), then run the normal play_card continuation.
+ *
+ * Pass (activate=false) and timeout do NOT consume the strategy's
+ * once-per-game usage right — only an actual activation counts (the rule
+ * documents never state that declining consumes the right; adopted ruling).
+ */
+function applyInterventionResponse(
+  game: Game,
+  action: InterventionResponseAction,
+  ctx: EngineContext,
+): Game {
+  const pi = game.pendingIntervention!; // validated upstream
+  const { effectResolver, ruleSet, playerStrategies } = ctx;
+
+  const responses = { ...pi.responses, [ctx.actorId]: action.activate };
+
+  // Still waiting for other candidates — just record the response
+  if (!pi.candidates.every(c => c.playerId in responses)) {
+    return applyPatch(game, {
+      pendingIntervention: { ...pi, responses },
+    });
+  }
+
+  // All responded — resolve accepted interventions in candidate order.
+  // Effects see the results of previously-resolved interventions (e.g.
+  // TrickStar removing the card makes a later Control-* a no-op, which then
+  // does not consume its usage right).
+  let resolved = applyPatch(game, { pendingIntervention: null });
+  const effectCtx: EffectContext = {
+    actorId:         pi.actorId,
+    triggerCard:     pi.triggerCard,
+    ruleSet,
+    setNumberBefore: pi.setNumberBefore,
+  };
+  for (const candidate of pi.candidates) {
+    if (!responses[candidate.playerId]) continue; // pass — right preserved
+    const patch = effectResolver.applyIntervention(
+      resolved, candidate.playerId, candidate.strategyId, effectCtx,
+    );
+    resolved = applyPatch(resolved, patch);
+  }
+
+  const isAggroActive =
+    playerStrategies[pi.actorId] === "Aggro" &&
+    !resolved.residualBugs.includes("Aggro-Forbidden");
+
+  return continueAfterCardEffects(resolved, {
+    cardId:          pi.triggerCard.cardId,
+    value:           pi.triggerCard.rawValue,
+    actorId:         pi.actorId,
+    setNumberBefore: pi.setNumberBefore,
+    isAggroActive,
+    ruleSet,
+  });
 }
 
 // ============================================================
@@ -971,6 +1088,8 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
       return applyResetOrRaid(game, action, ctx);
     case "showdown_submit":
       return applyShowdownSubmit(game, action, ctx);
+    case "intervention_response":
+      return applyInterventionResponse(game, action, ctx);
     case "select_strategy":
       // select_strategy is a session-level action; GameEngine returns game unchanged
       return game;

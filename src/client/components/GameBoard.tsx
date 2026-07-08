@@ -3,6 +3,7 @@ import type {
   GameView, Session, Room, PlayerId, CardId, Action,
 } from "../../shared/types/domain";
 import type { WsStatus } from "../hooks/useWebSocket";
+import type { InterventionOffer } from "../hooks/useGameState";
 import { PlayerList }    from "./PlayerList";
 import { FieldDisplay }  from "./FieldDisplay";
 import { HandDisplay }   from "./HandDisplay";
@@ -18,6 +19,8 @@ interface Props {
   playerId:      PlayerId;
   role:          "player" | "spectator";
   wsStatus:      WsStatus;
+  /** A1: private intervention offer addressed to this player */
+  interventionOffer?: InterventionOffer | null;
   onAction:      (action: Action) => void;
   onResetOrRaid: (choice: "reset" | "raid") => void;
 }
@@ -29,6 +32,7 @@ export function GameBoard({
   playerId,
   role,
   wsStatus,
+  interventionOffer,
   onAction,
   onResetOrRaid,
 }: Props) {
@@ -211,6 +215,8 @@ export function GameBoard({
                   phase={game.phase}
                   isMyTurn={isMyTurn}
                   resetOrRaidPending={resetOrRaidPending}
+                  interventionOffer={interventionOffer}
+                  interventionPending={game.interventionPending}
                   selectedCardId={selectedCardId}
                   selectedCardIds={selectedCardIds}
                   hasSubmitted={hasSubmitted}

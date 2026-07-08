@@ -366,6 +366,7 @@ interface Game {
   resetCount:       number;            // 0カードリセット回数（最大2）
   residualBugs:     BugId[];           // 前ゲームからの残留バグ
   raidState?:       RaidState;
+  pendingIntervention?: PendingIntervention; // A1: 介入オファーの応答待ち（下記）
   status_:          GameStatus;
   winnerId?:        PlayerId;
   events:           EventLog[];
@@ -383,6 +384,18 @@ interface RaidState {
   currentTurnIndex: number;
   bossActionsLeft:  number;            // Math.ceil(playerCount / 2)
 }
+
+// A1（オーナー裁定）: 介入系戦略（Control-Add/Sub/Mul/Div・Hack・TrickStar）の
+// 任意発動待ち。トリガー成立時に自動発動せず、候補者全員の accept/pass が
+// 揃うまでゲームは凍結される（手番前進なし・他アクション拒否）。
+interface PendingIntervention {
+  triggerCard:     FieldCard;          // トリガーカードのスナップショット
+  actorId:         PlayerId;           // トリガーカードを出したプレイヤー
+  setNumberBefore: number;             // カード演算前のセット数（undo/redo用）
+  candidates:      { playerId: PlayerId; strategyId: StrategyId }[];
+                                       // 解決優先順（actorの次から手番順）
+  responses:       Record<PlayerId, boolean>; // playerId → 発動するか
+}
 ```
 
 ### 3.5 アクション型
@@ -394,7 +407,8 @@ type Action =
   | RemoveBugAction
   | DrawCardAction
   | ResetOrRaidAction
-  | SelectStrategyAction;
+  | SelectStrategyAction
+  | InterventionResponseAction;
 
 interface PlayCardAction {
   type:      "play_card";
@@ -423,6 +437,13 @@ interface ResetOrRaidAction {
 interface SelectStrategyAction {
   type:       "select_strategy";
   strategyId: StrategyId;
+}
+
+// A1: server:intervention_offer への応答。activate=false（パス）や
+// タイムアウトでは 1ゲーム1回の発動権を消費しない
+interface InterventionResponseAction {
+  type:     "intervention_response";
+  activate: boolean;
 }
 ```
 
@@ -777,10 +798,12 @@ payload: {}
 
 #### `client:action`
 ```typescript
-payload: Action; // PlayCardAction | RemoveBugAction | DrawCardAction
-// 送信条件: 自分の手番中
+payload: Action; // PlayCardAction | RemoveBugAction | DrawCardAction | InterventionResponseAction
+// 送信条件: 自分の手番中（intervention_response のみ手番外＝オファー対象者が送信）
 // サーバ処理: ActionValidator → GameEngine.applyAction → EffectResolver
 //            → server:action_result (全員) + server:state_sync (手札のみ対象者)
+// A1: オファー待機中（pendingIntervention あり）は intervention_response 以外の
+//     全アクションを ACTION_INTERVENTION_PENDING で拒否する
 ```
 
 #### `client:reset_or_raid`
@@ -841,9 +864,27 @@ payload: {
   raidHpChanges?: Record<PlayerId | "boss", number>; // レイド戦HP変動
   deckCount:      number;
   events:         EventLog[];            // このアクションで追記されたイベント
+  interventionPending?: boolean;         // A1: 介入オファーの応答待ち中は true。
+                                         // 候補者・戦略は秘匿のため boolean のみ
 }
 visibility: "all"
 // 手札補充結果は別途 visibility="player" で個別送信
+```
+
+#### `server:intervention_offer`（A1: 介入発動の確認オファー、個別送信）
+```typescript
+payload: {
+  gameId:      GameId;
+  triggerCard: FieldCard;    // トリガーとなったカード
+  strategyId:  StrategyId;   // 受信者自身の発動可能な戦略
+  timeoutMs:   number;       // 応答期限（rules timeouts.intervention = 5000ms）
+  deadline:    number;       // サーバ側期限の目安（epoch ms・表示用）
+}
+visibility: "player"
+targetPlayerId: PlayerId     // 候補者ごとに個別送信（戦略は非公開情報のため）
+// 応答: client:action { type: "intervention_response", activate: boolean }
+// タイムアウト（サーバ権威・DOアラーム）で無応答はパス扱い。
+// 他プレイヤーには action_result の interventionPending でぼかして通知する
 ```
 
 #### `server:hand_updated`（手札更新、個別送信）
@@ -1207,6 +1248,48 @@ interface EffectRegistry {
 2. 戦略効果（自分の効果 → 他プレイヤーの介入効果の順）
 3. バグ効果（常時発動系は最後に適用）
 
+**介入効果の任意発動フロー（A1・オーナー裁定）**:
+
+介入系戦略（トリガー `on_card_played_by_other`: Control-Add/Sub/Mul/Div・Hack・
+TrickStar）は自動発動しない。カードプレイ時の処理は次の2段階になる。
+
+```
+play_card
+  1. 自分の戦略効果（on_card_played）を解決
+  2. EffectResolver.collectInterventionCandidates で介入候補を列挙
+     - トリガー一致・使用回数残あり・Forbidden 非適用・ハンドラ dry-run が
+       no-op でない（偶奇・from演算などの条件成立）プレイヤーのみ
+     - 候補ゼロ → 待ちなしで従来どおり即続行
+  3. 候補あり → game.pendingIntervention を立てて凍結
+     - 手番は進まない・補充ドローもしない
+     - 各候補者へ server:intervention_offer を個別送信（visibility="player"）
+     - 待機中は intervention_response 以外の全アクションを
+       ACTION_INTERVENTION_PENDING で拒否
+
+intervention_response（各候補者が accept / pass を返す）
+  4. 全候補の応答が揃ったら、accept した介入を候補順に解決
+     - 候補順 = 手番順（actor の次の席から時計回り）
+     - 先行介入で対象が消えた後続介入は no-op（発動権は消費しない）
+  5. 解決後に通常の継続処理: Aggro バースト判定 → 0カード待ち →
+     setNumber==0 勝利 → 補充ドロー → 手番前進 → フェーズ遷移
+
+タイムアウト（サーバ権威・DO アラーム）
+  - 応答期限は rules/*.yaml の timeouts.intervention（basic: 5000ms）。
+    全候補で1本の共通期限（誰かの応答で延長しない）
+  - 無応答はパス扱い: 発動せず、1ゲーム1回の発動権も消費しない
+    （トリガー不成立として温存。ルール文書に「見送りで権利消費」の規定は
+    ないためこの裁定を採用）
+  - クライアントのカウントダウンは表示用（サーバ側期限が正）
+
+情報の可視性: オファーは候補者本人のみに届く。他プレイヤーには
+server:action_result の `interventionPending: boolean` のみ通知し、
+「誰が発動権を持つか」（＝非公開の戦略情報）は漏らさない。候補列挙時に
+Forbidden で除外されたプレイヤーの strategy_invalidated イベントも記録しない
+（発動試行ではないため）。
+
+なお Aggro（`on_card_played`・自分）と Zero（`on_game_start`）は従来どおり
+自動発動のまま。
+
 **Forbidden 系バグと戦略の相互作用**:
 - `Control-Forbidden` が有効: `EffectResolver` で Control 系ハンドラを呼び出す前に除外
 - `Aggro-Forbidden` が有効: Aggro ハンドラを呼び出す前に除外
@@ -1227,6 +1310,7 @@ interface EffectRegistry {
 
 #### Control-Add / Control-Sub (`basic:controlAdd` 等)
 - **トリガー**: `on_card_played_by_other`（他プレイヤーがカードを出した時）
+- **発動方式**: 任意発動（A1）。トリガー成立時にオファーが届き、accept した場合のみ発動。pass/タイムアウトは発動権を消費しない
 - **タイミング**: カードが場に出た直後・演算適用前に発動可能
 - **遡及禁止**: `game.field` の最新カード（= 今出たカード）にのみ適用可能
 - **使用回数**: `game.usedStrategyCounts[actorId]["Control-Add"]` で管理。1 以上なら `ACTION_USAGE_LIMIT_EXCEEDED`
@@ -1234,12 +1318,14 @@ interface EffectRegistry {
 
 #### Hack (`basic:hack`)
 - **トリガー**: `on_card_played_by_other`（偶数カードが出た時）
+- **発動方式**: 任意発動（A1・オファー方式。Control 系と同じ）
 - **条件**: `triggerCard.rawValue % 2 === 0`
 - **処理**: `fieldCard.playerId = actorId`（所有権移転）、`effectiveValue` を Hack 発動者の戦略で再計算
 - **結果**: セット数への影響は変わらないが、**決戦フェーズ・レイド戦での有利不利**に影響
 
 #### TrickStar (`basic:trickStar`)
 - **トリガー**: `on_card_played_by_other`（奇数カードが出た時）
+- **発動方式**: 任意発動（A1・オファー方式。Control 系と同じ）
 - **条件**: `triggerCard.rawValue % 2 !== 0`
 - **処理**: `fieldCard` を `game.field` から削除し `game.excludedCards` へ追加、演算を取り消し（setNumber を元に戻す）
 
@@ -1416,6 +1502,8 @@ interface ErrorPayload {
 | `ACTION_RESET_LIMIT_EXCEEDED` | リセット可能回数（2 回）を超過 | true |
 | `ACTION_INVALID_BUG_REMOVAL_COST` | 除去コストを支払えない | true |
 | `ACTION_INVALID_PHASE` | 現在のフェーズで許可されていない操作 | true |
+| `ACTION_INTERVENTION_PENDING` | 介入オファーの応答待ち中は他のアクション不可（A1） | true |
+| `ACTION_NO_PENDING_INTERVENTION` | オファーが無い/対象外なのに intervention_response を送信 | true |
 
 #### WebSocket 系 `WS_`
 

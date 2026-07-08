@@ -7,6 +7,7 @@ import type {
   ResetOrRaidAction,
   ShowdownSubmitAction,
   SelectStrategyAction,
+  InterventionResponseAction,
   ValidationResult,
   PlayerId,
   CardId,
@@ -24,6 +25,8 @@ import {
   ACTION_INVALID_PHASE,
   ACTION_INVALID_OPERATION,
   ACTION_ALREADY_SUBMITTED,
+  ACTION_INTERVENTION_PENDING,
+  ACTION_NO_PENDING_INTERVENTION,
   SESSION_INVALID_STRATEGY,
 } from "../../shared/constants";
 
@@ -355,6 +358,28 @@ function validateSelectStrategy(
 }
 
 // ============================================================
+// intervention_response (A1)
+// ============================================================
+
+function validateInterventionResponse(
+  game: Game,
+  _action: InterventionResponseAction,
+  ctx: ValidateContext,
+): ValidationResult {
+  const pi = game.pendingIntervention;
+  if (!pi) {
+    return fail(ACTION_NO_PENDING_INTERVENTION, "No intervention offer is pending");
+  }
+  if (!pi.candidates.some(c => c.playerId === ctx.actorId)) {
+    return fail(ACTION_NOT_YOUR_TURN, "You are not an intervention candidate");
+  }
+  if (ctx.actorId in pi.responses) {
+    return fail(ACTION_ALREADY_SUBMITTED, "Intervention response already submitted");
+  }
+  return ok();
+}
+
+// ============================================================
 // Main entry point
 // ============================================================
 
@@ -367,6 +392,12 @@ export function validate(
   action: Action,
   ctx: ValidateContext,
 ): ValidationResult {
+  // A1: while an intervention offer is being resolved, the game is frozen —
+  // only intervention responses are accepted (progress consistency).
+  if (game.pendingIntervention && action.type !== "intervention_response") {
+    return fail(ACTION_INTERVENTION_PENDING, "Waiting for intervention responses");
+  }
+
   switch (action.type) {
     case "play_card":
       return validatePlayCard(game, action, ctx);
@@ -378,6 +409,8 @@ export function validate(
       return validateResetOrRaid(game, action, ctx);
     case "showdown_submit":
       return validateShowdownSubmit(game, action, ctx);
+    case "intervention_response":
+      return validateInterventionResponse(game, action, ctx);
     case "select_strategy":
       return validateSelectStrategy(action, ctx);
   }

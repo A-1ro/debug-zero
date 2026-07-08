@@ -45,6 +45,7 @@ export type ServerMessageType =
   | "server:session_started"
   | "server:game_started"
   | "server:action_result"
+  | "server:intervention_offer"
   | "server:hand_updated"
   | "server:phase_changed"
   | "server:raid_round_started"
@@ -150,6 +151,28 @@ export interface ActionResultPayload {
   turnOrder:         PlayerId[];
   currentTurnIndex:  number;
   events:            EventLog[];
+  /** A1: true while the game is frozen waiting for intervention responses.
+   *  Deliberately a bare boolean — candidate identities/strategies are secret. */
+  interventionPending?: boolean;
+}
+
+/**
+ * A1: sent privately (visibility="player") to each intervention candidate when
+ * another player's card triggers their optional strategy. The candidate must
+ * answer with a client:action { type: "intervention_response", activate } —
+ * no answer within timeoutMs counts as a pass (server-authoritative; the
+ * client countdown is display only).
+ */
+export interface InterventionOfferPayload {
+  gameId:      GameId;
+  /** The card that triggered the offer (as it currently sits on the field). */
+  triggerCard: FieldCard;
+  /** The recipient's own strategy that may activate. */
+  strategyId:  StrategyId;
+  /** Response window in ms (rules timeouts.intervention; default 5000). */
+  timeoutMs:   number;
+  /** Approximate server deadline (epoch ms) — display only. */
+  deadline:    number;
 }
 
 export interface HandUpdatedPayload {
@@ -215,6 +238,7 @@ export type ServerPayload =
   | SessionStartedPayload
   | GameStartedPayload
   | ActionResultPayload
+  | InterventionOfferPayload
   | HandUpdatedPayload
   | PhaseChangedPayload
   | RaidRoundStartedPayload
@@ -241,6 +265,7 @@ export type ServerMessage =
   | (ServerMessageBase & { type: "server:session_started";   payload: SessionStartedPayload   })
   | (ServerMessageBase & { type: "server:game_started";      payload: GameStartedPayload      })
   | (ServerMessageBase & { type: "server:action_result";     payload: ActionResultPayload     })
+  | (ServerMessageBase & { type: "server:intervention_offer"; payload: InterventionOfferPayload })
   | (ServerMessageBase & { type: "server:hand_updated";      payload: HandUpdatedPayload      })
   | (ServerMessageBase & { type: "server:phase_changed";     payload: PhaseChangedPayload     })
   | (ServerMessageBase & { type: "server:raid_round_started"; payload: RaidRoundStartedPayload })

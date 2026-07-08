@@ -58,6 +58,7 @@ export function SessionView() {
       playerId={playerId}
       role={role}
       wsStatus={status}
+      interventionOffer={state.interventionOffer}
       onAction={sendAction}
       onResetOrRaid={sendResetOrRaid}
     />

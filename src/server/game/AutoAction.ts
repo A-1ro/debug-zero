@@ -37,6 +37,19 @@ export function autoActionFor(
   playerId: PlayerId,
   ruleSet: RuleSet,
 ): Action | null {
+  // A1: 介入オファーの応答待ち中。無応答の候補者はタイムアウトでパス扱い
+  // （発動しない・1ゲーム1回の権利は消費しない）。
+  if (game.pendingIntervention) {
+    const pi = game.pendingIntervention;
+    const isUnrespondedCandidate =
+      pi.candidates.some((c) => c.playerId === playerId) &&
+      !(playerId in pi.responses);
+    if (isUnrespondedCandidate) {
+      return { type: "intervention_response", activate: false };
+    }
+    return null;
+  }
+
   const hand = game.hands[playerId] ?? [];
 
   if (game.phase === "showdown") {
