@@ -378,11 +378,22 @@ interface RaidState {
   bossPlayerId: PlayerId;
   bossHP:       number;                // 場のカード合計（額面値）
   playerHPs:    Record<PlayerId, number>; // 初期値 10
-  activeBugId:  BugId;                 // ボスが選択したバグ
+  activeBugId:  BugId;                 // ボスが選択したバグ（D2）。未選択時は ""
   roundIndex:   number;                // 1始まり
-  turnOrder:    PlayerId[];            // 1D10 で決定した手番順（ボス除く）
-  currentTurnIndex: number;
+  turnOrder:    PlayerId[];            // 1D10 で決定した手番順（ボスは含まない・D3）
+  currentTurnIndex: number;            // プレイヤー手番中のみ有効なインデックス
   bossActionsLeft:  number;            // Math.ceil(playerCount / 2)
+  // D3: 全プレイヤー行動後のボス手番中は true（currentTurnIndex は末尾スロットを指す）。
+  // undefined=プレイヤー手番。
+  bossTurn?:        boolean;
+  // D3: このラウンドの手番順を決めた各プレイヤーの最終1D10ロール。
+  // 旧stateとの互換のため optional。
+  diceResults?:     Record<PlayerId, number>;
+  // D2: ラウンド頭でボスのバグ選択を待っている間 true。選択が済む（or タイムアウトで
+  // ランダム代打）まで、レイドの戦闘アクションは一切受け付けない。
+  awaitingBugChoice?: boolean;
+  // D2: このラウンドでボスが選べる未発動バグの候補。
+  bugCandidates?:   BugId[];
 }
 
 // A1（オーナー裁定）: 介入系戦略（Control-Add/Sub/Mul/Div・Hack・TrickStar）の
@@ -408,7 +419,8 @@ type Action =
   | DrawCardAction
   | ResetOrRaidAction
   | SelectStrategyAction
-  | InterventionResponseAction;
+  | InterventionResponseAction
+  | ChooseRaidBugAction;
 
 interface PlayCardAction {
   type:      "play_card";
@@ -444,6 +456,14 @@ interface SelectStrategyAction {
 interface InterventionResponseAction {
   type:     "intervention_response";
   activate: boolean;
+}
+
+// D2: server:boss_bug_choice への応答。ボスがそのラウンドのバグを選ぶ。
+// bugId は bugCandidates のいずれかでなければならない。無応答はサーバが
+// ランダム代打（従来のランダム発生と同挙動）。
+interface ChooseRaidBugAction {
+  type:  "choose_raid_bug";
+  bugId: BugId;
 }
 ```
 
@@ -691,16 +711,23 @@ Room ──→ Session ──→ Game[]
   → [レイド戦ラウンド]
 
 [レイド戦ラウンド]
-  1. ボスがバグカード選択 (client:action by boss player)
-  2. 各プレイヤーが1D10 → ソートで手番順決定
+  1. ボスがバグカード選択 (client:action { choose_raid_bug } by boss / D2)
+     → ラウンド頭は raidState.awaitingBugChoice=true でボスの選択待ち。
+       サーバは server:boss_bug_choice をボスへ個別送信。
+       候補（未発動バグ）が空なら選択を飛ばして step2 へ直行。
+       タイムアウト（timeouts.bossBugChoice）でサーバがランダム代打。
+  2. 各プレイヤーが1D10 → 降順ソートで手番順決定 (D3)
+     → サーバ権威で各プレイヤーに1D10を振る。同値は当該プレイヤーのみ
+       振り直して順位を確定。ボスは手番順に含まない（turnOrder はプレイヤーのみ）。
+       server:raid_round_started に turnOrder と diceResults を載せて配信。
   3. プレイヤー手番サイクル:
      各プレイヤーが「カードを出す」「バグ除去」「手札補充」から1選択
-  4. ボス行動: ceil(playerCount/2) 回カードを出す
+  4. ボス行動: ceil(playerCount/2) 回カードを出す（raidState.bossTurn=true）
   5. 山札空なら場を山札に戻してシャッフル
   6. checkRaidEnd()
      → ボスHP <= 0: WinResult(raid_boss_*) → game.status = "finished"
      → 全プレイヤーHP <= 0: WinResult(raid_all_players_dead) → session 終了
-     → 継続: [レイド戦ラウンド] (roundIndex++)
+     → 継続: [レイド戦ラウンド] (roundIndex++、step1 のバグ選択待ちへ)
 ```
 
 ### 5.4 接続状態遷移
@@ -863,12 +890,34 @@ payload: {
   newSetNumber?:  number;                // 更新後のセット数
   raidHpChanges?: Record<PlayerId | "boss", number>; // レイド戦HP変動
   deckCount:      number;
+  turnOrder:        PlayerId[];          // 権威的な手番順
+  currentTurnIndex: number;              // 権威的な現在手番
   events:         EventLog[];            // このアクションで追記されたイベント
   interventionPending?: boolean;         // A1: 介入オファーの応答待ち中は true。
                                          // 候補者・戦略は秘匿のため boolean のみ
 }
 visibility: "all"
 // 手札補充結果は別途 visibility="player" で個別送信
+// レイド戦中は turnOrder/currentTurnIndex を raidState から投影して送る（サーバ側手番修正）：
+//   turnOrder = [...raidState.turnOrder, bossPlayerId]（ボスを末尾に付与）
+//   currentTurnIndex は bossTurn/awaitingBugChoice 中はボスを指す。
+//   → クライアント/bot は raid 中も turnOrder[currentTurnIndex] で現在手番を読める。
+```
+
+#### `server:boss_bug_choice`（D2: レイド戦ラウンドのバグ選択オファー、個別送信）
+```typescript
+payload: {
+  gameId:     GameId;
+  roundIndex: number;
+  candidates: BugId[];    // ボスが選べる未発動バグ
+  timeoutMs:  number;     // 応答期限（rules timeouts.bossBugChoice = 5000ms）
+  deadline:   number;     // サーバ側期限の目安（epoch ms・表示用）
+}
+visibility: "player"
+targetPlayerId: PlayerId  // ボスにのみ送信
+// 応答: client:action { type: "choose_raid_bug", bugId }
+// タイムアウト（サーバ権威・DOアラーム）で無応答はランダム代打（従来挙動）
+// 候補が空のラウンドではこのオファーは送られず、そのままラウンドが始まる
 ```
 
 #### `server:intervention_offer`（A1: 介入発動の確認オファー、個別送信）
