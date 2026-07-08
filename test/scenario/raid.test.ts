@@ -26,6 +26,19 @@ const ruleSet: RuleSet = {
   strategies: [],
   bugs: [
     {
+      // HPコスト付きバグ（D6テスト用）。Odd-Forbiddenより前に置く:
+      // rng=0.99のpickRaidBugは候補末尾を選ぶため、既存テストの
+      // 「新ラウンドでOdd-Forbiddenが発生する」期待値を保つ
+      id: "Stack-Forbidden",
+      effect: {
+        id: "basic:stackForbidden",
+        trigger: { type: "always" },
+        target: { type: "all_players" },
+        action: { type: "forbid_stack" },
+      },
+      removalCost: { type: "hp", amount: 3 },
+    },
+    {
       id: "Odd-Forbidden",
       effect: {
         id: "basic:oddForbidden",
@@ -240,6 +253,70 @@ describe("Scenario: raidの手番と補充", () => {
     expect(g.raidState?.currentTurnIndex).toBe(0); // ラウンド頭に戻る
     expect(g.residualBugs).toContain("Odd-Forbidden"); // 新ラウンドでバグ発生
     expect(g.events.some(e => e.type === "raid_round_started")).toBe(true);
+  });
+});
+
+describe("Scenario: バグ除去のHPコストで脱落・全滅する（D6）", () => {
+  it("HP3ちょうどでHP-3コストを払うとHP0になり脱落し、他プレイヤーが残ればゲームは続行する", () => {
+    const game = makeRaidGame({
+      residualBugs: ["Stack-Forbidden"],
+      raidState: {
+        ...makeRaidGame().raidState!,
+        playerHPs: { [P1]: 3, [P2]: 10 },
+        activeBugId: "Stack-Forbidden",
+        currentTurnIndex: 0, // P1の手番
+      },
+    });
+
+    const g = applyAction(game, { type: "remove_bug", bugId: "Stack-Forbidden" }, makeCtx(P1));
+
+    expect(g.raidState?.playerHPs[P1]).toBe(0);
+    expect(g.raidState?.turnOrder).toEqual([P2, P3]); // P1が脱落
+    expect(g.raidState?.turnOrder[g.raidState!.currentTurnIndex]).toBe(P2); // 手番はP2へ
+    expect(g.residualBugs).not.toContain("Stack-Forbidden"); // 除去自体は成立
+    expect(g.status).toBe("in-progress"); // P2が生存しているため続行
+    expect(g.events.some(
+      e => e.type === "player_eliminated" && e.payload.playerId === P1
+    )).toBe(true);
+  });
+
+  it("最後の1人がHPコストで倒れると全滅＝ボス勝利でゲーム終了する", () => {
+    // P2は既にHP0で脱落済み、生存者はP1のみ（HP3）
+    const game = makeRaidGame({
+      residualBugs: ["Stack-Forbidden"],
+      raidState: {
+        ...makeRaidGame().raidState!,
+        playerHPs: { [P1]: 3, [P2]: 0 },
+        activeBugId: "Stack-Forbidden",
+        turnOrder: [P1, P3],
+        currentTurnIndex: 0, // P1の手番
+      },
+    });
+
+    const g = applyAction(game, { type: "remove_bug", bugId: "Stack-Forbidden" }, makeCtx(P1));
+
+    expect(g.raidState?.playerHPs[P1]).toBe(0);
+    expect(g.status).toBe("finished");
+    expect(g.winnerId).toBeUndefined(); // 勝者なし＝ボスのセッション勝利（DO側でendSession）
+    expect(g.events.some(
+      e => e.type === "game_ended" && e.payload.winType === "raid_all_players_dead"
+    )).toBe(true);
+  });
+
+  it("HPがコスト未満だと除去できない（ACTION_INVALID_BUG_REMOVAL_COST）", () => {
+    const game = makeRaidGame({
+      residualBugs: ["Stack-Forbidden"],
+      raidState: {
+        ...makeRaidGame().raidState!,
+        playerHPs: { [P1]: 2, [P2]: 10 },
+        activeBugId: "Stack-Forbidden",
+        currentTurnIndex: 0,
+      },
+    });
+
+    expect(() =>
+      applyAction(game, { type: "remove_bug", bugId: "Stack-Forbidden" }, makeCtx(P1))
+    ).toThrow("ACTION_INVALID_BUG_REMOVAL_COST");
   });
 });
 

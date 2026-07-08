@@ -549,14 +549,40 @@ function applyRemoveBug(game: Game, action: RemoveBugAction, ctx: EngineContext)
   // Raid: bug removal consumes the player's raid turn and clears the active bug
   if (game.phase === "raid" && game.raidState) {
     const rs = patch.raidState && patch.raidState !== null ? patch.raidState : game.raidState;
+    let turnOrder = rs.turnOrder;
+    let currentTurnIndex = nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder);
+
+    // An HP removal cost may knock the payer out (e.g. paying HP-3 at exactly
+    // 3 HP) — same elimination path as being hit by the boss (D6)
+    const events: EventLog[] = [];
+    if ((rs.playerHPs[actorId] ?? 1) <= 0) {
+      const elim = eliminateRaidPlayer(turnOrder, currentTurnIndex, actorId);
+      if (elim.removed) {
+        turnOrder = elim.turnOrder;
+        currentTurnIndex = elim.currentTurnIndex;
+        events.push({
+          id:        newEventId(),
+          timestamp: Date.now(),
+          type:      "player_eliminated",
+          actorId:   "system",
+          payload:   { playerId: actorId, reason: "raid_hp_zero" },
+        });
+      }
+    }
+
     patch = {
       ...patch,
       raidState: {
         ...rs,
         activeBugId: rs.activeBugId === action.bugId ? "" : rs.activeBugId,
-        currentTurnIndex: nextRaidTurnIndex(rs.currentTurnIndex, rs.turnOrder),
+        turnOrder,
+        currentTurnIndex,
       },
+      appendEvents: [...(patch.appendEvents ?? []), ...events],
     };
+
+    // All players may now be dead (boss wins) — same end check as boss attacks
+    return resolveRaidEnd(applyPatch(game, patch), actorId);
   }
 
   return applyPatch(game, patch);
@@ -704,6 +730,26 @@ function applyResetOrRaid(game: Game, action: ResetOrRaidAction, ctx: EngineCont
 // ============================================================
 
 /**
+ * Remove a raid player whose HP reached 0 from the raid rotation, keeping
+ * currentTurnIndex pointing at the same next actor (with wraparound).
+ * Shared by boss attacks and HP removal costs (D6).
+ */
+function eliminateRaidPlayer(
+  turnOrder: PlayerId[],
+  currentTurnIndex: number,
+  target: PlayerId,
+): { turnOrder: PlayerId[]; currentTurnIndex: number; removed: boolean } {
+  const removedIdx = turnOrder.indexOf(target);
+  if (removedIdx === -1) return { turnOrder, currentTurnIndex, removed: false };
+
+  const newOrder = turnOrder.filter(pid => pid !== target);
+  let idx = currentTurnIndex;
+  if (removedIdx < idx) idx--;
+  idx = newOrder.length > 0 ? idx % newOrder.length : 0;
+  return { turnOrder: newOrder, currentTurnIndex: idx, removed: true };
+}
+
+/**
  * Raid-phase play_card (§5.3 レイド戦ラウンド):
  *  - players attack the boss: bossHP -= rawValue
  *  - the boss attacks a player: playerHP -= rawValue, ceil(playerCount/2) times
@@ -760,10 +806,12 @@ function applyRaidPlayCard(game: Game, action: PlayCardAction, ctx: EngineContex
       payload:   { target, delta: -value, hp: playerHPs[target] },
     });
     // A player at 0 HP drops out of the raid rotation
-    if (playerHPs[target] <= 0 && turnOrder.includes(target)) {
-      const removedIdx = turnOrder.indexOf(target);
-      turnOrder = turnOrder.filter(pid => pid !== target);
-      if (removedIdx < currentTurnIndex) currentTurnIndex--;
+    const elim = playerHPs[target] <= 0
+      ? eliminateRaidPlayer(turnOrder, currentTurnIndex, target)
+      : null;
+    if (elim?.removed) {
+      turnOrder = elim.turnOrder;
+      currentTurnIndex = elim.currentTurnIndex;
       events.push({
         id:        newEventId(),
         timestamp: Date.now(),

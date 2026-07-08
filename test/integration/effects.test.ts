@@ -343,7 +343,7 @@ describe("div演算の巻き戻し（D4）", () => {
           id: "basic:trickStar",
           trigger: { type: "on_card_played_by_other" },
           target:  { type: "field_card" },
-          action:  { type: "remove_card" },
+          action:  { type: "remove_field_card" },
           usageLimit: 1,
         },
       }],
