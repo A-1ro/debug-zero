@@ -9,29 +9,43 @@ import type {
 } from "../../shared/types/domain";
 import type { PendingIntervention } from "../../shared/types/domain";
 import type { EffectContext } from "../../shared/types/effects";
-import type { TriggerCondition } from "../../shared/types/rules";
+import type { TriggerCondition, RuleSet } from "../../shared/types/rules";
 import type { EffectRegistry } from "./EffectRegistry";
 import { RULE_EFFECT_UNREGISTERED } from "../../shared/constants";
 import { applyPatch } from "../game/GameEngine";
 
 // ============================================================
-// Forbidden bug → blocked strategy mapping
+// Forbidden bug → blocked strategy mapping (data-driven, D8/D12)
 // ============================================================
 
 /**
- * Maps each Forbidden bug ID to the strategy IDs it suppresses.
- * When one of these bugs is active (residualBugs), the corresponding
- * strategy handlers are skipped and a strategy_invalidated event is recorded.
+ * Builds the "Forbidden bug ID → suppressed strategy IDs" map from the ruleset
+ * instead of a hardcoded table (D8/D12): a bug suppresses a strategy when the
+ * bug's effect action is `invalidate_strategy` and it carries a `strategy_match`
+ * constraint naming that strategy. Control-Forbidden lists all four Control
+ * strategies in `rules/basic.yaml`, so it suppresses Control-Add/Sub/Mul/Div.
+ * When one of these bugs is active (residualBugs), the corresponding strategy
+ * handlers are skipped and a strategy_invalidated event is recorded.
  */
-const FORBIDDEN_BUG_STRATEGY_MAP: Record<BugId, StrategyId[]> = {
-  "Aggro-Forbidden":     ["Aggro"],
-  "Control-Forbidden":   ["Control-Add", "Control-Sub", "Control-Mul", "Control-Div"],
-  "Hack-Forbidden":      ["Hack"],
-  "TrickStar-Forbidden": ["TrickStar"],
-};
+function forbiddenBugStrategyMap(ruleSet: RuleSet): Record<BugId, StrategyId[]> {
+  const map: Record<BugId, StrategyId[]> = {};
+  for (const bug of ruleSet.bugs) {
+    if (bug.effect.action.type !== "invalidate_strategy") continue;
+    const ids = (bug.effect.constraints ?? [])
+      .filter((c): c is { type: "strategy_match"; strategyId: StrategyId } => c.type === "strategy_match")
+      .map(c => c.strategyId);
+    if (ids.length > 0) map[bug.id] = ids;
+  }
+  return map;
+}
 
-function isForbiddenStrategy(strategyId: StrategyId, residualBugs: BugId[]): boolean {
-  for (const [bugId, strategies] of Object.entries(FORBIDDEN_BUG_STRATEGY_MAP)) {
+function isForbiddenStrategy(
+  strategyId: StrategyId,
+  residualBugs: BugId[],
+  ruleSet: RuleSet,
+): boolean {
+  const map = forbiddenBugStrategyMap(ruleSet);
+  for (const [bugId, strategies] of Object.entries(map)) {
     if (residualBugs.includes(bugId) && strategies.includes(strategyId)) {
       return true;
     }
@@ -143,7 +157,7 @@ export class EffectResolver {
       if (limit != null && used >= limit) continue;
 
       // Check Forbidden bugs — skip and record invalidation event
-      if (isForbiddenStrategy(strategyId, current.residualBugs)) {
+      if (isForbiddenStrategy(strategyId, current.residualBugs, ctx.ruleSet)) {
         invalidatedEvents.push({
           id:        newEventId(),
           timestamp: Date.now(),
@@ -190,9 +204,10 @@ export class EffectResolver {
     }
 
     // ── Bug effects (non-Forbidden bugs only) ─────────────────
+    const forbiddenMap = forbiddenBugStrategyMap(ctx.ruleSet);
     for (const bugId of current.residualBugs) {
       // Forbidden-type bugs are handled in ActionValidator / strategy suppression above
-      if (bugId in FORBIDDEN_BUG_STRATEGY_MAP) continue;
+      if (bugId in forbiddenMap) continue;
 
       const bugDef = ctx.ruleSet.bugs.find(b => b.id === bugId);
       if (!bugDef) continue;
@@ -250,7 +265,7 @@ export class EffectResolver {
       const used = game.usedStrategyCounts[playerId]?.[strategyId] ?? 0;
       if (limit != null && used >= limit) continue;
 
-      if (isForbiddenStrategy(strategyId, game.residualBugs)) continue;
+      if (isForbiddenStrategy(strategyId, game.residualBugs, ctx.ruleSet)) continue;
 
       const handler = this.registry.get(strategyDef.effect.id);
       if (!handler) continue;
@@ -293,7 +308,7 @@ export class EffectResolver {
     const limit = strategyDef.effect.usageLimit;
     const used = game.usedStrategyCounts[playerId]?.[strategyId] ?? 0;
     if (limit != null && used >= limit) return {};
-    if (isForbiddenStrategy(strategyId, game.residualBugs)) {
+    if (isForbiddenStrategy(strategyId, game.residualBugs, ctx.ruleSet)) {
       return {
         appendEvents: [{
           id:        newEventId(),

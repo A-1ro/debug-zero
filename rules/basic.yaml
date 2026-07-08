@@ -222,9 +222,17 @@ bugs:
         type: all_players
       action:
         type: invalidate_strategy
+      # Control-Forbidden は Control 系4戦略すべてを無効化する（実装が意図・D8）。
+      # strategy_match を4つ列挙して data-driven に宣言する（EffectResolver が参照）。
       constraints:
         - type: strategy_match
           strategyId: Control-Add
+        - type: strategy_match
+          strategyId: Control-Sub
+        - type: strategy_match
+          strategyId: Control-Mul
+        - type: strategy_match
+          strategyId: Control-Div
     removalCost:
       type: hp
       amount: 3

@@ -1408,9 +1408,19 @@ Forbidden で除外されたプレイヤーの strategy_invalidated イベント
 自動発動のまま。
 
 **Forbidden 系バグと戦略の相互作用**:
-- `Control-Forbidden` が有効: `EffectResolver` で Control 系ハンドラを呼び出す前に除外
+- `Control-Forbidden` が有効: `EffectResolver` で Control 系ハンドラ（Control-Add /
+  Control-Sub / Control-Mul / Control-Div の **4つすべて**）を呼び出す前に除外
 - `Aggro-Forbidden` が有効: Aggro ハンドラを呼び出す前に除外
-- 除外した場合は `strategy_invalidated` イベントを記録
+- `Hack-Forbidden` / `TrickStar-Forbidden` も同様に対応する戦略を除外
+- 除外した場合は `strategy_invalidated` イベント（`reason: "forbidden_bug"`）を記録
+
+**「Forbiddenバグ→無効化する戦略」の対応は yaml 駆動（D8/D12）**: ハードコードの
+対応表を持たず、`EffectResolver.forbiddenBugStrategyMap()` が ruleset から動的に構築する。
+各 Forbidden バグは `effect.action.type = "invalidate_strategy"` を持ち、無効化対象を
+`constraints` の `strategy_match`（`strategyId`）で列挙する。`Control-Forbidden` は
+`rules/basic.yaml` で strategy_match を **4件**（Control-Add/Sub/Mul/Div）宣言しており、
+これが実装の意図（Control 系すべてを無効化）と一致する。新しい Forbidden バグや対象戦略の
+追加は yaml の編集だけで済み、`EffectResolver` のコード変更は不要。
 
 ### 8.4 各戦略カード効果の詳細仕様
 
