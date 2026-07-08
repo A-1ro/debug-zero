@@ -1,8 +1,27 @@
 import type { Operation, EventId } from "../../../shared/types/domain";
+import type { EffectContext } from "../../../shared/types/effects";
+
+/**
+ * Recover the setNumber as it was before the trigger card's operation was applied.
+ *
+ * Prefers ctx.setNumberBefore (the exact pre-card value recorded by GameEngine
+ * when the card was played). Falls back to reverse-computing from the current
+ * setNumber only when the context does not carry it (e.g. legacy callers) —
+ * note that the fallback cannot exactly reverse div (Math.ceil loses information).
+ */
+export function preCardSetNumber(
+  ctx: EffectContext,
+  currentSetNumber: number,
+  op: Operation,
+  effectiveValue: number,
+): number {
+  return ctx.setNumberBefore ?? undoOperation(currentSetNumber, op, effectiveValue);
+}
 
 /**
  * Reverse an arithmetic operation to recover the setNumber before the card was played.
- * Used by Control and TrickStar handlers to compute the pre-card setNumber.
+ * Fallback only — div is an approximation (Math.ceil cannot be reversed exactly).
+ * Prefer preCardSetNumber(), which uses the exact value carried in EffectContext.
  */
 export function undoOperation(setNumber: number, op: Operation, effectiveValue: number): number {
   switch (op) {

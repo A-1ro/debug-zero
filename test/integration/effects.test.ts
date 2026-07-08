@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import { aggro }          from "../../src/server/effects/handlers/strategies/aggro";
 import { controlAdd }     from "../../src/server/effects/handlers/strategies/controlAdd";
 import { hack }           from "../../src/server/effects/handlers/strategies/hack";
+import { trickStar }      from "../../src/server/effects/handlers/strategies/trickStar";
 import { valueCorruption } from "../../src/server/effects/handlers/bugs/valueCorruption";
+import { applyAction } from "../../src/server/game/GameEngine";
+import type { EngineContext } from "../../src/server/game/GameEngine";
+import { EffectRegistry } from "../../src/server/effects/EffectRegistry";
+import { EffectResolver } from "../../src/server/effects/EffectResolver";
+import { registerAllHandlers } from "../../src/server/effects/registerHandlers";
 import type { Game, PlayerId, FieldCard } from "../../src/shared/types/domain";
 import type { EffectContext } from "../../src/shared/types/effects";
 import type { RuleSet } from "../../src/shared/types/rules";
@@ -203,6 +209,89 @@ describe("hack handler", () => {
     const patch = hack(game, makeCtx(P2, card));
 
     expect(patch.field![0].playerId).toBe(P2);
+  });
+});
+
+// ============================================================
+// div 巻き戻し（D4: Math.ceil は逆算不能 → setNumberBefore を使う）
+// ============================================================
+
+describe("div演算の巻き戻し（D4）", () => {
+  it("trickStar: 10 div 3 → ceil=4 のカードを除去すると setNumber が正確に 10 へ戻る", () => {
+    // 10 div 3 = ceil(10/3) = 4。近似逆算（4*3=12）ではなく、
+    // ctx.setNumberBefore に保持された演算前の値で正確に巻き戻す
+    const card = makeFieldCard(3, "div", P1);
+    const game = makeGameWithLastCard(4, card);
+
+    const patch = trickStar(game, { ...makeCtx(P2, card), setNumberBefore: 10 });
+
+    expect(patch.field).toHaveLength(0);
+    expect(patch.setNumber).toBe(10);
+  });
+
+  it("valueCorruption: div カードの effectiveValue 汚染も setNumberBefore から再計算される", () => {
+    // 10 div 3 = 4 → effectiveValue が 10 に汚染 → ceil(10/10) = 1
+    const card = makeFieldCard(3, "div", P1);
+    const game = makeGameWithLastCard(4, card);
+
+    const patch = valueCorruption(game, { ...makeCtx(P1, card), setNumberBefore: 10 });
+
+    expect(patch.field![0].effectiveValue).toBe(10);
+    expect(patch.setNumber).toBe(1);
+  });
+
+  it("GameEngine経由: div カードが TrickStar に除去されると setNumber がプレイ前の値へ戻る", () => {
+    // エンジンが effectCtx.setNumberBefore を渡していることのend-to-end確認
+    const trickStarRuleSet: RuleSet = {
+      id: "basic",
+      version: "1.0",
+      deck: { cards: [{ value: 1, count: 10 }] },
+      strategies: [{
+        id: "TrickStar",
+        effect: {
+          id: "basic:trickStar",
+          trigger: { type: "on_card_played_by_other" },
+          target:  { type: "field_card" },
+          action:  { type: "remove_card" },
+          usageLimit: 1,
+        },
+      }],
+      bugs: [],
+      phases: [
+        { id: "normal",   transitionConditions: [] },
+        { id: "showdown", transitionConditions: [] },
+        { id: "raid",     transitionConditions: [] },
+      ],
+      winCondition:  { winsRequired: 3 },
+      initialConfig: {
+        recommendedPlayers: 2,
+        initialHandSize:    5,
+        initialHP:          10,
+        setNumberFormula:   "gameIndex * 10",
+      },
+    };
+    const registry = new EffectRegistry();
+    registerAllHandlers(registry);
+    const ctx: EngineContext = {
+      actorId: P1,
+      ruleSet: trickStarRuleSet,
+      playerStrategies: { [P2]: "TrickStar" },
+      effectResolver: new EffectResolver(registry),
+      rng: () => 0.5,
+    };
+
+    // 場の直前カード rawValue=3 なので 3 の div は合法。10 div 3 → 4 → TrickStar除去 → 10
+    const prevCard = makeFieldCard(3, "add", P2);
+    const game: Game = {
+      ...makeGameWithLastCard(10, prevCard),
+      deck: ["1-001"],
+      hands: { [P1]: ["3-002"], [P2]: [] },
+    };
+
+    const g = applyAction(game, { type: "play_card", cardId: "3-002", operation: "div" }, ctx);
+
+    expect(g.setNumber).toBe(10); // 12（近似逆算）ではない
+    expect(g.field.some(fc => fc.cardId === "3-002")).toBe(false); // 除去済み
   });
 });
 

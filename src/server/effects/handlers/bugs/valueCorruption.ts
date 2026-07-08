@@ -1,6 +1,6 @@
 import type { Game, GamePatch } from "../../../../shared/types/effects";
 import type { EffectContext } from "../../../../shared/types/effects";
-import { undoOperation, applyOperation, newEventId } from "../_utils";
+import { preCardSetNumber, applyOperation, newEventId } from "../_utils";
 
 const CORRUPTED_VALUE = 10;
 
@@ -33,7 +33,7 @@ export function valueCorruption(game: Game, ctx: EffectContext): GamePatch {
   // No change needed if already corrupted
   if (lastField.effectiveValue === CORRUPTED_VALUE) return {};
 
-  const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
+  const prevSetNumber = preCardSetNumber(ctx, game.setNumber, lastField.operation, lastField.effectiveValue);
   const newSetNumber = applyOperation(prevSetNumber, lastField.operation, CORRUPTED_VALUE);
 
   const updatedField = [...game.field];

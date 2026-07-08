@@ -1,6 +1,6 @@
 import type { Game, GamePatch } from "../../../../shared/types/effects";
 import type { EffectContext } from "../../../../shared/types/effects";
-import { undoOperation, newEventId } from "../_utils";
+import { preCardSetNumber, newEventId } from "../_utils";
 
 /**
  * TrickStar strategy effect handler.
@@ -24,7 +24,7 @@ export function trickStar(game: Game, ctx: EffectContext): GamePatch {
   if (lastField.cardId !== triggerCard.cardId) return {};
 
   // Reverse the arithmetic to recover the pre-card setNumber
-  const prevSetNumber = undoOperation(game.setNumber, lastField.operation, lastField.effectiveValue);
+  const prevSetNumber = preCardSetNumber(ctx, game.setNumber, lastField.operation, lastField.effectiveValue);
 
   const newField = game.field.slice(0, lastIndex);
   const newExcluded = [...game.excludedCards, lastField.cardId];

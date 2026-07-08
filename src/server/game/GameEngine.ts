@@ -175,6 +175,9 @@ function applyPlayCard(game: Game, action: PlayCardAction, ctx: EngineContext): 
     actorId,
     triggerCard: fieldCard,
     ruleSet,
+    // Exact pre-card setNumber so handlers can undo the card's arithmetic
+    // without reverse-computing (div/Math.ceil is not exactly reversible)
+    setNumberBefore: arith.before,
   };
 
   // 1. Actor's strategy effects (on_card_played)
