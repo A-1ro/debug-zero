@@ -32,6 +32,8 @@ export const ACTION_INTERVENTION_PENDING      = "ACTION_INTERVENTION_PENDING";
 export const ACTION_NO_PENDING_INTERVENTION   = "ACTION_NO_PENDING_INTERVENTION";
 // D2: boss chooses the raid-round bug
 export const ACTION_INVALID_BUG_CHOICE        = "ACTION_INVALID_BUG_CHOICE";
+// Raid: a turn may only be skipped when the player has no legal move at all
+export const ACTION_NO_LEGAL_MOVE             = "ACTION_NO_LEGAL_MOVE";
 
 // WebSocket errors
 export const WS_DUPLICATE_MESSAGE  = "WS_DUPLICATE_MESSAGE";

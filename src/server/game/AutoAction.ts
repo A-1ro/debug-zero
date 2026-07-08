@@ -1,6 +1,7 @@
 import type { Game, Action, PlayerId, CardId } from "../../shared/types/domain";
 import type { RuleSet } from "../../shared/types/rules";
 import { raidActor } from "./TurnManager";
+import { isRaidCardPlayable, affordableRaidRemoval } from "./ActionValidator";
 
 // ============================================================
 // AutoAction — 手番タイムアウト時にサーバが代打で選ぶ「安全な一手」
@@ -70,22 +71,36 @@ export function autoActionFor(
     }
     // 手番が本当にこのプレイヤーか（防御的チェック）
     if (raidActor(rs) !== playerId) return null;
-    const c = lowestCard(hand);
-    if (!c) {
-      // ボスは補充できない。プレイヤーは手札が無ければドロー（補充）で手番を渡す
-      if (playerId !== rs.bossPlayerId && game.deck.length > 0) {
-        return { type: "draw_card" };
-      }
-      return null;
-    }
+
+    // ボス: バグの制約を受けない（オーナー裁定1）。最小カードで生存者を攻撃。
     if (playerId === rs.bossPlayerId) {
+      const c = lowestCard(hand);
+      if (!c) return null; // ボスは補充・除去できない（手札切れは対象外）
       const target = Object.entries(rs.playerHPs)
         .filter(([, hp]) => hp > 0)
         .map(([id]) => id as PlayerId)[0];
       if (!target) return null;
       return { type: "play_card", cardId: c, operation: "add", targetId: target };
     }
-    return { type: "play_card", cardId: c, operation: "add", targetId: "boss" };
+
+    // 非ボス: 禁止バグに触れない合法カードを最小から選ぶ。
+    const playable = hand
+      .filter((c) => isRaidCardPlayable(game, c, false))
+      .sort((a, b) => cardValue(a) - cardValue(b));
+    if (playable.length > 0) {
+      return { type: "play_card", cardId: playable[0], operation: "add", targetId: "boss" };
+    }
+    // 出せる札がない → 補充（ドロー）で手番を渡す
+    if (game.deck.length > 0 && hand.length < ruleSet.initialConfig.initialHandSize) {
+      return { type: "draw_card" };
+    }
+    // 補充も不可 → 支払える残バグがあれば除去
+    const removal = affordableRaidRemoval(game, playerId, ruleSet);
+    if (removal) {
+      return { type: "remove_bug", bugId: removal.bugId, costCardIds: removal.costCardIds };
+    }
+    // 合法手が一切ない（全札禁止・補充不可・除去不可）→ スキップ（裁定2・3）
+    return { type: "skip_turn" };
   }
 
   // normal phase

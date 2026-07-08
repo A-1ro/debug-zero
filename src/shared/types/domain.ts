@@ -234,6 +234,14 @@ export interface ChooseRaidBugAction {
   bugId: BugId;
 }
 
+/** Skip a raid turn player who has zero legal moves (owner ruling: a fully
+ *  bug-forbidden hand with no draw/removal available). Server-generated only —
+ *  produced proactively by the engine and by the auto-action on timeout; never
+ *  sent by a client. */
+export interface SkipTurnAction {
+  type: "skip_turn";
+}
+
 export type Action =
   | PlayCardAction
   | RemoveBugAction
@@ -242,7 +250,8 @@ export type Action =
   | ShowdownSubmitAction
   | SelectStrategyAction
   | InterventionResponseAction
-  | ChooseRaidBugAction;
+  | ChooseRaidBugAction
+  | SkipTurnAction;
 
 // ============================================================
 // Result types
@@ -321,6 +330,7 @@ export type EventType =
   | "raid_round_started"
   | "hp_changed"
   | "card_drawn"
+  | "turn_skipped"
   | "player_eliminated"
   | "game_ended"
   | "session_ended"

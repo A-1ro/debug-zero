@@ -9,6 +9,7 @@ import type {
   ShowdownSubmitAction,
   InterventionResponseAction,
   ChooseRaidBugAction,
+  SkipTurnAction,
   Operation,
   PlayerId,
   StrategyId,
@@ -22,7 +23,7 @@ import type {
 } from "../../shared/types/domain";
 import type { RuleSet, RemovalCost } from "../../shared/types/rules";
 import type { EffectContext } from "../../shared/types/effects";
-import { validate } from "./ActionValidator";
+import { validate, raidPlayerHasLegalMove } from "./ActionValidator";
 import { resolve as arithmeticResolve } from "./ArithmeticJudge";
 import { nextTurnIndex } from "./TurnManager";
 import {
@@ -1196,6 +1197,75 @@ function resolveRaidEnd(game: Game, actorId: PlayerId): Game {
 }
 
 // ============================================================
+// skip_turn (owner ruling 2)
+// ============================================================
+
+/**
+ * Skip the current (non-boss) raid player who has no legal move: advance the
+ * raid rotation to the next player (or the boss) and record a turn_skipped
+ * event. Validated upstream (validateSkipTurn). The applyAction post-pass then
+ * cascades through any further stuck players.
+ */
+function applySkipTurn(game: Game, ctx: EngineContext): Game {
+  const rs = game.raidState!; // validated upstream
+  const adv = advanceRaidPlayerTurn(rs);
+  return applyPatch(game, {
+    raidState: {
+      ...rs,
+      turnOrder:        adv.turnOrder,
+      currentTurnIndex: adv.currentTurnIndex,
+      bossTurn:         adv.bossTurn,
+    },
+    appendEvents: [{
+      id:        newEventId(),
+      timestamp: Date.now(),
+      type:      "turn_skipped",
+      actorId:   "system",
+      payload:   { playerId: ctx.actorId, reason: "no_legal_move", roundIndex: rs.roundIndex },
+    }],
+  });
+}
+
+/**
+ * Owner ruling 2 (proactive skip + deadlock fix): while the raid turn is on a
+ * non-boss player who has zero legal moves (all cards forbidden, no draw, no
+ * affordable removal), advance past them and emit turn_skipped. Cascades until
+ * a player with a legal move is on the clock, or the boss's turn begins, or the
+ * bug-choice wait is reached. Guarantees the raid can never freeze on a
+ * fully-forbidden hand. Pure function.
+ */
+function skipStuckRaidPlayers(game: Game, ruleSet: RuleSet): Game {
+  let g = game;
+  let guard = 0;
+  while (g.raidState && g.phase === "raid" && g.status === "in-progress") {
+    const rs = g.raidState;
+    if (rs.awaitingBugChoice || rs.bossTurn) break;
+    const actor = rs.turnOrder[rs.currentTurnIndex];
+    if (actor === undefined) break;
+    if (raidPlayerHasLegalMove(g, actor, ruleSet)) break;
+    // Safety net: currentTurnIndex only increases here, but never loop forever.
+    if (guard++ > rs.turnOrder.length) break;
+    const adv = advanceRaidPlayerTurn(rs);
+    g = applyPatch(g, {
+      raidState: {
+        ...rs,
+        turnOrder:        adv.turnOrder,
+        currentTurnIndex: adv.currentTurnIndex,
+        bossTurn:         adv.bossTurn,
+      },
+      appendEvents: [{
+        id:        newEventId(),
+        timestamp: Date.now(),
+        type:      "turn_skipped",
+        actorId:   "system",
+        payload:   { playerId: actor, reason: "no_legal_move", roundIndex: rs.roundIndex },
+      }],
+    });
+  }
+  return g;
+}
+
+// ============================================================
 // applyAction — main entry point
 // ============================================================
 
@@ -1218,23 +1288,34 @@ export function applyAction(game: Game, action: Action, ctx: EngineContext): Gam
     throw new Error(validation.errorCode ?? "INVALID_ACTION");
   }
 
+  let result: Game;
   switch (action.type) {
     case "play_card":
-      return applyPlayCard(game, action, ctx);
+      result = applyPlayCard(game, action, ctx); break;
     case "draw_card":
-      return applyDrawCard(game, action, ctx);
+      result = applyDrawCard(game, action, ctx); break;
     case "remove_bug":
-      return applyRemoveBug(game, action, ctx);
+      result = applyRemoveBug(game, action, ctx); break;
     case "reset_or_raid":
-      return applyResetOrRaid(game, action, ctx);
+      result = applyResetOrRaid(game, action, ctx); break;
     case "showdown_submit":
-      return applyShowdownSubmit(game, action, ctx);
+      result = applyShowdownSubmit(game, action, ctx); break;
     case "intervention_response":
-      return applyInterventionResponse(game, action, ctx);
+      result = applyInterventionResponse(game, action, ctx); break;
     case "choose_raid_bug":
-      return applyChooseRaidBug(game, action, ctx);
+      result = applyChooseRaidBug(game, action, ctx); break;
+    case "skip_turn":
+      result = applySkipTurn(game, ctx); break;
     case "select_strategy":
       // select_strategy is a session-level action; GameEngine returns game unchanged
-      return game;
+      result = game; break;
   }
+
+  // Owner ruling 2 (deadlock fix): after any raid action, proactively skip any
+  // non-boss player who is now on the clock with zero legal moves so the game
+  // never stalls on a fully bug-forbidden hand.
+  if (result.phase === "raid" && result.status === "in-progress" && result.raidState) {
+    result = skipStuckRaidPlayers(result, ctx.ruleSet);
+  }
+  return result;
 }

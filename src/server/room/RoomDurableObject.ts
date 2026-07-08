@@ -949,9 +949,16 @@ export class RoomDurableObject implements DurableObject {
     const auto = autoActionFor(game, player, ruleSet);
     if (!auto) { await this.state.storage.delete("turnGuard"); return; }
 
-    // Record a turn_timeout marker, then run the auto action through the normal
-    // apply+broadcast path (which will re-arm the next turn's alarm).
-    await this.applyAndBroadcast(room, session, game, auto, player);
+    // Run the auto action through the normal apply+broadcast path (which re-arms
+    // the next turn's alarm). Robustness (owner ruling 3): an invalid auto-action
+    // must never leave the alarm un-armed. autoActionFor already returns a legal
+    // fallback or skip_turn, so this should not fire — but if it ever does, re-arm
+    // a fresh window on the unchanged game rather than freezing the room forever.
+    await this.applyAndBroadcast(room, session, game, auto, player, {
+      onInvalid: async () => {
+        await this.scheduleTurnAlarm(game, ruleSet);
+      },
+    });
   }
 
   private async handleResetOrRaid(message: ClientMessage, _connectionId: string): Promise<void> {

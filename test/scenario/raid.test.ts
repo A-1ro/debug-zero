@@ -547,6 +547,124 @@ describe("Scenario: バグ除去のHPコストで脱落・全滅する（D6）",
   });
 });
 
+describe("Scenario: レイド中のForbiddenバグとデッドロック回避（オーナー裁定1/2/3）", () => {
+  const rs = () => makeRaidGame().raidState!;
+
+  it("裁定1: ボスはForbiddenバグの影響を受けず、禁止パリティのカードでも攻撃できる", () => {
+    // Odd-Forbidden有効。ボス(P3)が奇数7でP1を攻撃 → 通常プレイヤーなら禁止だがボスは免除。
+    const game = makeRaidGame({
+      residualBugs: ["Odd-Forbidden"],
+      hands: { [P1]: ["2-001"], [P2]: ["2-002"], [P3]: ["7-001"] },
+      raidState: {
+        ...rs(),
+        activeBugId: "Odd-Forbidden",
+        turnOrder: [P1, P2],
+        currentTurnIndex: 2, // ボススロット
+        bossTurn: true,
+        bossActionsLeft: 1,
+      },
+    });
+    const g = applyAction(
+      game,
+      { type: "play_card", cardId: "7-001", operation: "add", targetId: P1 },
+      makeCtx(P3),
+    );
+    expect(g.status).toBe("in-progress");
+    expect(g.raidState?.playerHPs[P1]).toBe(3); // 10 - 7、免除で成立
+  });
+
+  it("裁定1: 同じ奇数カードでも非ボスプレイヤーは Odd-Forbidden で拒否される", () => {
+    const game = makeRaidGame({
+      residualBugs: ["Odd-Forbidden"],
+      hands: { [P1]: ["9-001", "4-001"], [P2]: ["2-001"], [P3]: ["7-001"] },
+      raidState: { ...rs(), activeBugId: "Odd-Forbidden", currentTurnIndex: 0 }, // P1の手番
+    });
+    // 奇数9は禁止
+    expect(() =>
+      applyAction(game, { type: "play_card", cardId: "9-001", operation: "add", targetId: "boss" }, makeCtx(P1)),
+    ).toThrow("ACTION_BUG_FORBIDDEN");
+    // 偶数4は合法（回帰: 合法な代替手があるプレイヤーには制約が効き続ける）
+    const g = applyAction(
+      game,
+      { type: "play_card", cardId: "4-001", operation: "add", targetId: "boss" },
+      makeCtx(P1),
+    );
+    expect(g.raidState?.bossHP).toBe(10); // 14 - 4
+  });
+
+  it("裁定2: 全札が禁止で補充も除去もできない非ボスプレイヤーは自動スキップされ、ゲームは続行する", () => {
+    // Odd-Forbidden有効、山札切れ。P1の手札は全て奇数、除去は偶数札が要るが持っていない → 詰み。
+    const game = makeRaidGame({
+      deck: [],
+      residualBugs: ["Odd-Forbidden"],
+      hands: { [P1]: ["9-001", "7-001"], [P2]: ["2-001"], [P3]: ["8-001"] },
+      raidState: {
+        ...rs(),
+        activeBugId: "Odd-Forbidden",
+        turnOrder: [P2, P1],
+        currentTurnIndex: 0, // P2の手番
+        bossActionsLeft: 1,
+      },
+    });
+    // P2が合法な偶数2を出す → 手番はP1へ進むが、P1は詰みなので同一処理内でスキップされボス手番へ
+    const g = applyAction(
+      game,
+      { type: "play_card", cardId: "2-001", operation: "add", targetId: "boss" },
+      makeCtx(P2),
+    );
+    expect(g.status).toBe("in-progress");         // フリーズしない
+    expect(g.raidState?.bossHP).toBe(12);          // 14 - 2
+    expect(g.raidState?.bossTurn).toBe(true);      // P1はスキップされボス手番へ
+    expect(
+      g.events.some((e) => e.type === "turn_skipped" && e.payload.playerId === P1),
+    ).toBe(true);
+  });
+
+  it("裁定3: 詰み手札の代打はForbiddenカードではなく skip_turn を返し、適用してもフリーズしない", () => {
+    const game = makeRaidGame({
+      deck: [],
+      residualBugs: ["Odd-Forbidden"],
+      hands: { [P1]: ["9-001", "7-001"], [P2]: ["2-001"], [P3]: ["8-001"] },
+      raidState: {
+        ...rs(),
+        activeBugId: "Odd-Forbidden",
+        turnOrder: [P1, P2],
+        currentTurnIndex: 0, // P1の手番（詰み）
+        bossActionsLeft: 1,
+      },
+    });
+    // 代打はForbiddenなカードプレイではなくスキップ
+    const auto = autoActionFor(game, P1, ruleSet);
+    expect(auto).toEqual({ type: "skip_turn" });
+    // 適用してもフリーズせず手番が進む（アラーム連続性の担保となる合法手）
+    const g = applyAction(game, auto!, makeCtx(P1));
+    expect(g.status).toBe("in-progress");
+    expect(g.events.some((e) => e.type === "turn_skipped")).toBe(true);
+    expect(g.raidState?.turnOrder[g.raidState!.currentTurnIndex]).toBe(P2); // 合法手のあるP2へ
+  });
+
+  it("裁定2/3: 全札禁止でも偶数札で残バグを除去できるなら skip されず除去が代打になる", () => {
+    // P1は奇数9のみだが偶数札4を持ち、Odd-Forbidden(除去コスト=偶数1枚)を払える → 詰みではない
+    const game = makeRaidGame({
+      deck: [],
+      residualBugs: ["Odd-Forbidden"],
+      hands: { [P1]: ["9-001", "4-001"], [P2]: ["2-001"], [P3]: ["8-001"] },
+      raidState: {
+        ...rs(),
+        activeBugId: "Odd-Forbidden",
+        turnOrder: [P1, P2],
+        currentTurnIndex: 0,
+        bossActionsLeft: 1,
+      },
+    });
+    // 偶数4は合法カードなので、まずカードプレイが代打になる（除去より優先）
+    const auto = autoActionFor(game, P1, ruleSet);
+    expect(auto).toEqual({ type: "play_card", cardId: "4-001", operation: "add", targetId: "boss" });
+    // skip_turn は合法手があるので拒否される
+    expect(() => applyAction(game, { type: "skip_turn" }, makeCtx(P1))).toThrow("ACTION_NO_LEGAL_MOVE");
+  });
+});
+
 describe("Scenario: bugResidual（バグ残留と1ゲーム後クリア）", () => {
   it("below-zero勝利で残ったバグは次ゲームに引き継がれ、そのゲーム中は除去不可、その次のゲームでクリアされる", async () => {
     const service = new SessionService(new InMemorySessionStorage());

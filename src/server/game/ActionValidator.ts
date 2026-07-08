@@ -9,6 +9,7 @@ import type {
   SelectStrategyAction,
   InterventionResponseAction,
   ChooseRaidBugAction,
+  SkipTurnAction,
   ValidationResult,
   PlayerId,
   CardId,
@@ -30,6 +31,7 @@ import {
   ACTION_INTERVENTION_PENDING,
   ACTION_NO_PENDING_INTERVENTION,
   ACTION_INVALID_BUG_CHOICE,
+  ACTION_NO_LEGAL_MOVE,
   SESSION_INVALID_STRATEGY,
 } from "../../shared/constants";
 
@@ -66,9 +68,16 @@ function isCurrentTurnPlayer(game: Game, actorId: PlayerId): boolean {
 // play_card
 // ============================================================
 
-/** Forbidden-bug play constraints (Odd/Even/Stack) — apply in normal and raid phases. */
-function checkForbiddenBugs(game: Game, action: PlayCardAction): ValidationResult {
-  const value = cardValueFromId(action.cardId);
+/**
+ * Forbidden-bug play constraints (Odd/Even/Stack) — apply in normal and raid
+ * phases. Evaluated data-drivenly from an `isBoss` context: the raid boss is
+ * NOT affected by bugs (owner ruling), so a boss play is never constrained by a
+ * forbidding bug. `isBoss` is always false outside the raid phase.
+ */
+export function checkForbiddenBugs(game: Game, value: number, isBoss: boolean): ValidationResult {
+  // Owner ruling 1: the boss is exempt from bug-imposed card-play constraints.
+  if (isBoss) return ok();
+
   const lastFieldCard = game.field.length > 0 ? game.field[game.field.length - 1] : undefined;
 
   if (game.residualBugs.includes("Odd-Forbidden") && value % 2 !== 0) {
@@ -85,6 +94,94 @@ function checkForbiddenBugs(game: Game, action: PlayCardAction): ValidationResul
     return fail(ACTION_BUG_FORBIDDEN, "Stack-Forbidden: stacking the same value is forbidden");
   }
   return ok();
+}
+
+/** True if the given hand card is legal to play (bug constraints only). */
+export function isRaidCardPlayable(game: Game, cardId: CardId, isBoss: boolean): boolean {
+  return checkForbiddenBugs(game, cardValueFromId(cardId), isBoss).valid;
+}
+
+/**
+ * Auto-selected cost cards to remove a bug during raid, or null if the player
+ * cannot afford it. Mirrors the (lenient) affordability rules used by
+ * validateRemoveBug/canPayRemovalCost so this stays consistent with what the
+ * validator would accept.
+ */
+function raidRemovalCostCards(
+  game: Game,
+  actorId: PlayerId,
+  cost: RemovalCost,
+): CardId[] | null {
+  switch (cost.type) {
+    case "hp": {
+      const hp = game.raidState?.playerHPs[actorId] ?? 0;
+      return hp >= cost.amount ? [] : null;
+    }
+    case "hand_card": {
+      const hand = game.hands[actorId] ?? [];
+      const matching = hand.filter(id => {
+        const v = cardValueFromId(id);
+        if (cost.value === "any") return true;
+        if (cost.value === "even") return v % 2 === 0;
+        if (cost.value === "odd") return v % 2 !== 0;
+        return v === cost.value;
+      });
+      return matching.length >= cost.amount ? matching.slice(0, cost.amount) : null;
+    }
+    case "composite": {
+      const all: CardId[] = [];
+      for (const sub of cost.costs) {
+        const cc = raidRemovalCostCards(game, actorId, sub);
+        if (cc === null) return null;
+        all.push(...cc);
+      }
+      return all;
+    }
+  }
+}
+
+/**
+ * A removable bug this raid player can currently afford to remove, with the
+ * cost cards to spend, or null. Bugs carried in from the previous game cannot be
+ * removed (same rule as validateRemoveBug).
+ */
+export function affordableRaidRemoval(
+  game: Game,
+  actorId: PlayerId,
+  ruleSet: RuleSet,
+): { bugId: string; costCardIds: CardId[] } | null {
+  const carried = game.carriedBugs ?? [];
+  for (const bugId of game.residualBugs) {
+    if (carried.includes(bugId)) continue;
+    const bugDef = ruleSet.bugs?.find(b => b.id === bugId);
+    if (!bugDef) continue;
+    const cc = raidRemovalCostCards(game, actorId, bugDef.removalCost);
+    if (cc !== null) return { bugId, costCardIds: cc };
+  }
+  return null;
+}
+
+/**
+ * Does this (non-boss) raid turn player have ANY legal action? Legal raid
+ * actions are: play a non-forbidden card, refill by drawing, or remove an
+ * affordable bug (owner ruling 2). The boss is exempt from bug constraints, so
+ * a boss with any card always has a move.
+ */
+export function raidPlayerHasLegalMove(
+  game: Game,
+  playerId: PlayerId,
+  ruleSet: RuleSet,
+): boolean {
+  const rs = game.raidState;
+  if (!rs) return false;
+  const hand = game.hands[playerId] ?? [];
+  const isBoss = playerId === rs.bossPlayerId;
+  if (isBoss) return hand.length > 0;
+
+  if (hand.some(id => isRaidCardPlayable(game, id, false))) return true;
+  if (game.deck.length > 0 && hand.length < ruleSet.initialConfig.initialHandSize) return true;
+  if (affordableRaidRemoval(game, playerId, ruleSet)) return true;
+  return false;
 }
 
 function validatePlayCard(
@@ -120,7 +217,8 @@ function validatePlayCard(
     } else if (action.targetId && action.targetId !== "boss") {
       return fail(ACTION_INVALID_CARD, "Players can only target the boss");
     }
-    return checkForbiddenBugs(game, action);
+    // Owner ruling 1: the boss is exempt from forbidding bugs during raid.
+    return checkForbiddenBugs(game, cardValueFromId(action.cardId), actorId === rs.bossPlayerId);
   }
 
   if (!isCurrentTurnPlayer(game, actorId)) {
@@ -150,7 +248,8 @@ function validatePlayCard(
     return fail(arithmeticCheck.errorCode ?? ACTION_INVALID_CARD);
   }
 
-  const forbidden = checkForbiddenBugs(game, action);
+  // Normal phase has no boss — isBoss is always false here.
+  const forbidden = checkForbiddenBugs(game, value, false);
   if (!forbidden.valid) return forbidden;
 
   return ok();
@@ -417,6 +516,40 @@ function validateChooseRaidBug(
 }
 
 // ============================================================
+// skip_turn (owner ruling 2)
+// ============================================================
+
+/**
+ * A raid turn player with zero legal moves may be skipped. Only valid during a
+ * raid, for the current non-boss actor, and only when they genuinely have no
+ * legal action (all cards forbidden AND no draw AND no affordable removal). The
+ * boss is never skipped — it is exempt from bug constraints.
+ */
+function validateSkipTurn(
+  game: Game,
+  _action: SkipTurnAction,
+  ctx: ValidateContext,
+): ValidationResult {
+  if (game.phase !== "raid" || !game.raidState) {
+    return fail(ACTION_INVALID_PHASE, "skip_turn is only available during a raid");
+  }
+  const rs = game.raidState;
+  if (rs.awaitingBugChoice) {
+    return fail(ACTION_INVALID_PHASE, "The boss is choosing the round bug");
+  }
+  if (ctx.actorId === rs.bossPlayerId) {
+    return fail(ACTION_INVALID_PHASE, "The boss is exempt from bugs and is never skipped");
+  }
+  if (raidActor(rs) !== ctx.actorId) {
+    return fail(ACTION_NOT_YOUR_TURN);
+  }
+  if (raidPlayerHasLegalMove(game, ctx.actorId, ctx.ruleSet)) {
+    return fail(ACTION_NO_LEGAL_MOVE, "A legal move is available; the turn cannot be skipped");
+  }
+  return ok();
+}
+
+// ============================================================
 // Main entry point
 // ============================================================
 
@@ -450,6 +583,8 @@ export function validate(
       return validateInterventionResponse(game, action, ctx);
     case "choose_raid_bug":
       return validateChooseRaidBug(game, action, ctx);
+    case "skip_turn":
+      return validateSkipTurn(game, action, ctx);
     case "select_strategy":
       return validateSelectStrategy(action, ctx);
   }
