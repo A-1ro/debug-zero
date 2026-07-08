@@ -181,6 +181,97 @@ describe("hack handler", () => {
     expect(patch.field).toBeDefined();
     expect(patch.field![0].playerId).toBe(P2);
     expect(patch.appendEvents!.some(e => e.type === "card_stolen")).toBe(true);
+    // 素の値のカード（effectiveValue === rawValue）では setNumber は変わらない
+    expect(patch.setNumber).toBeUndefined();
+  });
+
+  it("Aggroで倍化された偶数カードを奪うと effectiveValue が rawValue に戻り setNumber が再計算される（add）", () => {
+    // Aggro P1 played card(4, add): effectiveValue=8, setNumber = 10+8 = 18
+    const card: FieldCard = { ...makeFieldCard(4, "add", P1), effectiveValue: 8 };
+    const game = makeGameWithLastCard(18, card);
+
+    const patch = hack(game, { ...makeCtx(P2, card), setNumberBefore: 10 });
+
+    expect(patch.field![0].playerId).toBe(P2);
+    expect(patch.field![0].effectiveValue).toBe(4); // Hack発動者の戦略で再計算（倍率なし）
+    expect(patch.setNumber).toBe(14);               // undo add(18-8=10) → re-apply add(10+4)
+  });
+
+  it("Aggroで倍化された偶数カードを奪うと setNumber が再計算される（sub）", () => {
+    // Aggro P1 played card(4, sub): effectiveValue=8, setNumber = 10-8 = 2
+    const card: FieldCard = { ...makeFieldCard(4, "sub", P1), effectiveValue: 8 };
+    const game = makeGameWithLastCard(2, card);
+
+    const patch = hack(game, { ...makeCtx(P2, card), setNumberBefore: 10 });
+
+    expect(patch.field![0].effectiveValue).toBe(4);
+    expect(patch.setNumber).toBe(6); // undo sub(2+8=10) → re-apply sub(10-4)
+  });
+
+  it("GameEngine経由: Aggroの偶数カードをHackが奪うと最終setNumberが素の値で適用した値になる", () => {
+    const hackRuleSet: RuleSet = {
+      id: "basic",
+      version: "1.0",
+      deck: { cards: [{ value: 1, count: 10 }] },
+      strategies: [
+        {
+          id: "Aggro",
+          effect: {
+            id: "basic:aggro",
+            trigger: { type: "on_card_played" },
+            target:  { type: "self" },
+            action:  { type: "multiply_effective_value", factor: 2 },
+          },
+        },
+        {
+          id: "Hack",
+          effect: {
+            id: "basic:hack",
+            trigger: { type: "on_card_played_by_other" },
+            target:  { type: "field_card" },
+            action:  { type: "steal_card" },
+            usageLimit: 1,
+          },
+        },
+      ],
+      bugs: [],
+      phases: [
+        { id: "normal",   transitionConditions: [] },
+        { id: "showdown", transitionConditions: [] },
+        { id: "raid",     transitionConditions: [] },
+      ],
+      winCondition:  { winsRequired: 3 },
+      initialConfig: {
+        recommendedPlayers: 2,
+        initialHandSize:    5,
+        initialHP:          10,
+        setNumberFormula:   "gameIndex * 10",
+      },
+    };
+    const registry = new EffectRegistry();
+    registerAllHandlers(registry);
+    const ctx: EngineContext = {
+      actorId: P1,
+      ruleSet: hackRuleSet,
+      playerStrategies: { [P1]: "Aggro", [P2]: "Hack" },
+      effectResolver: new EffectResolver(registry),
+      rng: () => 0.5,
+    };
+
+    // P1(Aggro) が 4(add) をプレイ: 10 + 4*2 = 18 → P2(Hack) が奪って再計算: 10 + 4 = 14
+    const game: Game = {
+      ...makeGameWithLastCard(10, makeFieldCard(1, "add", P2)),
+      setNumber: 10,
+      deck: ["1-001"],
+      hands: { [P1]: ["4-002"], [P2]: [] },
+    };
+
+    const g = applyAction(game, { type: "play_card", cardId: "4-002", operation: "add" }, ctx);
+
+    const stolen = g.field.find(fc => fc.cardId === "4-002")!;
+    expect(stolen.playerId).toBe(P2);
+    expect(stolen.effectiveValue).toBe(4);
+    expect(g.setNumber).toBe(14);
   });
 
   it("奇数カードのとき: 何も変わらない", () => {
