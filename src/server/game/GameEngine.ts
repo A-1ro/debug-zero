@@ -669,7 +669,7 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
     bossHP,
     playerHPs,
     activeBugId:      spawnedBug,
-    roundIndex:       0,
+    roundIndex:       1, // 1-based (detail-design.md §3 RaidState: 1始まり)
     turnOrder:        raidTurnOrder,
     currentTurnIndex: 0,
     bossActionsLeft:  Math.ceil(playerCount / 2),
@@ -700,7 +700,7 @@ function applyRaidStart(game: Game, actorId: PlayerId, ruleSet: RuleSet, rng: ()
       timestamp: Date.now(),
       type:      "bug_activated",
       actorId:   "system",
-      payload:   { bugId: spawnedBug, roundIndex: 0 },
+      payload:   { bugId: spawnedBug, roundIndex: raidState.roundIndex },
     });
   }
 

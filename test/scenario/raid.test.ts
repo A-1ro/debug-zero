@@ -108,7 +108,7 @@ function makeRaidGame(overrides: Partial<Game> = {}): Game {
       bossHP: 14,
       playerHPs: { [P1]: 10, [P2]: 10 },
       activeBugId: "",
-      roundIndex: 0,
+      roundIndex: 1, // 1始まり（detail-design.md §3 RaidState）
       turnOrder: [P1, P2, P3], // プレイヤー→最後にボス
       currentTurnIndex: 0,
       bossActionsLeft: 1, // ceil(2/2)
@@ -138,6 +138,7 @@ describe("Scenario: raid開始（0カード→raid選択）", () => {
     expect(g.raidState?.bossPlayerId).toBe(P3);
     expect(g.raidState?.playerHPs).toEqual({ [P1]: 10, [P2]: 10 });
     expect(g.raidState?.turnOrder).toEqual([P1, P2, P3]); // ボスは最後
+    expect(g.raidState?.roundIndex).toBe(1); // D11: 1始まり
     expect(g.field).toHaveLength(0);
     expect(g.residualBugs).toHaveLength(1); // ラウンド開始でバグ発生
     expect(g.events.some(e => e.type === "bug_activated")).toBe(true);
@@ -249,7 +250,7 @@ describe("Scenario: raidの手番と補充", () => {
       },
     });
     const g = applyAction(game, { type: "play_card", cardId: "2-001", operation: "add", targetId: P1 }, makeCtx(P3));
-    expect(g.raidState?.roundIndex).toBe(1);
+    expect(g.raidState?.roundIndex).toBe(2); // ラウンド1 → 2（1始まり）
     expect(g.raidState?.currentTurnIndex).toBe(0); // ラウンド頭に戻る
     expect(g.residualBugs).toContain("Odd-Forbidden"); // 新ラウンドでバグ発生
     expect(g.events.some(e => e.type === "raid_round_started")).toBe(true);

@@ -84,7 +84,7 @@ describe("checkPhaseTransition", () => {
         raidState: {
           bossPlayerId: P2, bossHP: 0,
           playerHPs: { [P1]: 5 },
-          activeBugId: "some-bug", roundIndex: 0,
+          activeBugId: "some-bug", roundIndex: 1,
           turnOrder: [P1], currentTurnIndex: 0, bossActionsLeft: 1,
         },
       });
@@ -99,7 +99,7 @@ describe("checkPhaseTransition", () => {
         raidState: {
           bossPlayerId: P2, bossHP: -3,
           playerHPs: { [P1]: 5 },
-          activeBugId: "some-bug", roundIndex: 0,
+          activeBugId: "some-bug", roundIndex: 1,
           turnOrder: [P1], currentTurnIndex: 0, bossActionsLeft: 1,
         },
       });
@@ -113,7 +113,7 @@ describe("checkPhaseTransition", () => {
         raidState: {
           bossPlayerId: P2, bossHP: 5,
           playerHPs: { [P1]: 5 },
-          activeBugId: "some-bug", roundIndex: 0,
+          activeBugId: "some-bug", roundIndex: 1,
           turnOrder: [P1], currentTurnIndex: 0, bossActionsLeft: 1,
         },
       });
@@ -135,7 +135,7 @@ describe("checkPhaseTransition", () => {
         raidState: {
           bossPlayerId: P2, bossHP: 5,
           playerHPs: { [P1]: 0, [P2]: -1 },
-          activeBugId: "some-bug", roundIndex: 0,
+          activeBugId: "some-bug", roundIndex: 1,
           turnOrder: [P1, P2], currentTurnIndex: 0, bossActionsLeft: 1,
         },
       });
@@ -151,7 +151,7 @@ describe("checkPhaseTransition", () => {
         raidState: {
           bossPlayerId: P2, bossHP: 5,
           playerHPs: { [P1]: 3, [P2]: 0 },
-          activeBugId: "some-bug", roundIndex: 0,
+          activeBugId: "some-bug", roundIndex: 1,
           turnOrder: [P1, P2], currentTurnIndex: 0, bossActionsLeft: 1,
         },
       });

@@ -110,7 +110,7 @@ export function FieldDisplay({ game, room, playerId }: Props) {
             );
           })}
           <div className={s.raidBugId}>
-            BUG: {game.raidState.activeBugId} · ROUND {game.raidState.roundIndex + 1}
+            BUG: {game.raidState.activeBugId} · ROUND {game.raidState.roundIndex}
           </div>
         </div>
       )}
